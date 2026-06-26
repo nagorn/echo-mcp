@@ -1,0 +1,67 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Stripe-like PaymentIntent Test Contract",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/v1/payment_intents/{id}/confirm": {
+      "post": {
+        "responses": {
+          "402": {
+            "description": "Payment confirmation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error"],
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "code",
+                        "decline_code",
+                        "message",
+                        "payment_intent"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string"
+                        },
+                        "code": {
+                          "type": "string"
+                        },
+                        "decline_code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "payment_intent": {
+                          "type": "object",
+                          "required": ["id", "object", "status"],
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "object": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
