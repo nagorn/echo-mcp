@@ -31,6 +31,15 @@ DDoS helper.
 - Do not treat Echo MCP as a production service, API gateway, reverse proxy, or
   public webhook relay.
 
+## License
+
+Echo MCP is source-available under the Elastic License 2.0. It is not OSI open
+source.
+
+Echo MCP is free to use for internal development and testing under the license
+terms. Commercial or enterprise licensing may be offered separately later. See
+[LICENSE](LICENSE).
+
 ## Reporting Security Issues
 
 Do not file public issues for suspected vulnerabilities.

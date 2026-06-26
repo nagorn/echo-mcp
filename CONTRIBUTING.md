@@ -46,6 +46,12 @@ make docker-build
 
 ## License
 
+Echo MCP is source-available under the Elastic License 2.0. It is not OSI open
+source.
+
+Echo MCP is free to use for internal development and testing under the license
+terms. Commercial or enterprise licensing may be offered separately later.
+
 By contributing, you agree that your contribution may be distributed under the
 project's license, the Elastic License 2.0.
 

@@ -131,9 +131,8 @@ See [SECURITY.md](SECURITY.md) for release security guidance.
 Echo MCP is source-available under the [Elastic License 2.0](LICENSE). It is not
 OSI open source.
 
-The first public release is intended for internal development and testing use
-under that license. Commercial or enterprise licensing may be offered separately
-later.
+Echo MCP is free to use for internal development and testing under the license
+terms. Commercial or enterprise licensing may be offered separately later.
 
 ## Tell Your AI
 

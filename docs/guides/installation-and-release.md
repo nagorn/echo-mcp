@@ -7,6 +7,9 @@ deployment architecture.
 Echo MCP is source-available under the Elastic License 2.0. It is not OSI open
 source.
 
+Echo MCP is free to use for internal development and testing under the license
+terms. Commercial or enterprise licensing may be offered separately later.
+
 ## Requirements
 
 - Go `1.26.2` or compatible Go `1.26.x` toolchain.
@@ -245,7 +248,7 @@ until release automation is explicitly approved.
 
 ## Release Checks
 
-Before preparing a release candidate, verify:
+Before publishing a release, verify:
 
 - documentation describes only implemented capabilities
 - ADRs match the release surface
