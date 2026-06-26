@@ -245,7 +245,7 @@ webhook endpoint:
 
 ```bash
 ECHO_MCP_WEBHOOK_ENDPOINT_NAME=payment-events \
-ECHO_MCP_WEBHOOK_ENDPOINT_ADDRESS=http://127.0.0.1:18080/webhooks/payments \
+ECHO_MCP_WEBHOOK_ENDPOINT_ADDRESS=http://127.0.0.1:3000/webhooks/payments \
 ./bin/echo-mcp
 ```
 

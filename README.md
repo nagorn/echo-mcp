@@ -150,19 +150,42 @@ is written as a deterministic checklist for AI coding assistants.
 
 ## Quick Start
 
-Clone, test, and build:
+Recommended installation path:
+
+1. Download the correct binary archive from
+   [Echo MCP v0.1.0](https://github.com/nagorn/echo-mcp/releases/tag/v0.1.0).
+2. Download `checksums.txt`.
+3. Verify the archive SHA-256 checksum.
+4. Extract the `echo-mcp` binary.
+5. Register that binary as an MCP stdio server.
+
+Asset mapping:
+
+| Platform | Asset |
+| --- | --- |
+| macOS Apple Silicon | `echo-mcp_darwin_arm64.tar.gz` |
+| macOS Intel | `echo-mcp_darwin_amd64.tar.gz` |
+| Linux amd64 | `echo-mcp_linux_amd64.tar.gz` |
+| Linux arm64 | `echo-mcp_linux_arm64.tar.gz` |
+| Windows amd64 | `echo-mcp_windows_amd64.zip` |
+
+For example, on macOS Apple Silicon:
 
 ```bash
-git clone https://github.com/nagorn/echo-mcp.git
-cd echo-mcp
-make test
-make build
+mkdir -p .codex/bin
+curl -L -o /tmp/echo-mcp_darwin_arm64.tar.gz \
+  https://github.com/nagorn/echo-mcp/releases/download/v0.1.0/echo-mcp_darwin_arm64.tar.gz
+curl -L -o /tmp/echo-mcp-checksums.txt \
+  https://github.com/nagorn/echo-mcp/releases/download/v0.1.0/checksums.txt
+(cd /tmp && grep 'echo-mcp_darwin_arm64.tar.gz' echo-mcp-checksums.txt | shasum -a 256 -c -)
+tar -xzf /tmp/echo-mcp_darwin_arm64.tar.gz -C .codex/bin
+chmod +x .codex/bin/echo-mcp
 ```
 
 Register Echo MCP as an MCP stdio server in your MCP host:
 
 ```text
-command: /absolute/path/to/echo-mcp/bin/echo-mcp
+command: /absolute/path/to/project/.codex/bin/echo-mcp
 args: []
 env:
   ECHO_MCP_HTTP_ADDR=127.0.0.1:18080
@@ -170,6 +193,10 @@ env:
 
 Client-specific MCP configuration formats vary. Echo MCP only requires that the
 host starts the binary over stdio and passes any needed environment variables.
+
+Building from source is the fallback path for development, unsupported
+platforms, or users who specifically want to inspect or modify the source before
+running Echo MCP.
 
 Ask the MCP client to call `configure_behavior`:
 
@@ -286,6 +313,7 @@ outbound URLs.
 | Unmatched requests | [Unmatched REST Requests](docs/reference/unmatched-rest-requests.md) |
 | Developer workflow | [Developer Usage Guide](docs/guides/developer-usage.md) |
 | AI workflow | [AI Agent Usage Guide](docs/guides/ai-agent-usage.md) |
+| Installation | [Installation Guide](docs/guides/installation.md) |
 | AI installation | [AI-Assisted Installation](docs/guides/ai-assisted-installation.md) |
 | Installation and release | [Installation and Release Guidance](docs/guides/installation-and-release.md) |
 | Examples | [Hello World](docs/examples/hello-world.md), [Stripe-like PaymentIntent](docs/examples/stripe-paymentintent-scenario.md), [Webhook-style Event Delivery](docs/examples/webhook-style-event-delivery.md) |
@@ -303,9 +331,12 @@ Current implemented capabilities:
   application webhook endpoint.
 - In-memory observations and reset.
 
-Active next milestones:
+Current public release:
 
-- First public GitHub release.
+- `v0.1.0`
+
+Active next work:
+
 - Documentation and example hardening based on real project usage.
 
 ## Contributing

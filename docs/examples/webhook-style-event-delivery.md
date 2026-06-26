@@ -36,7 +36,7 @@ authorization, metrics, audit logs, or production deployment architecture.
 The Application Under Test exposes a normal webhook endpoint:
 
 ```text
-POST http://127.0.0.1:18080/webhooks/payments
+POST http://127.0.0.1:3000/webhooks/payments
 ```
 
 The developer wants an AI agent to trigger a payment-related event without the
@@ -49,7 +49,7 @@ webhook endpoint:
 
 ```bash
 ECHO_MCP_WEBHOOK_ENDPOINT_NAME=payment-events \
-ECHO_MCP_WEBHOOK_ENDPOINT_ADDRESS=http://127.0.0.1:18080/webhooks/payments \
+ECHO_MCP_WEBHOOK_ENDPOINT_ADDRESS=http://127.0.0.1:3000/webhooks/payments \
 ./bin/echo-mcp
 ```
 

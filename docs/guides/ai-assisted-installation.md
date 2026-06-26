@@ -45,28 +45,68 @@ project's test workflow.
 
 ## Installation Steps
 
-### 1. Clone and Build
+Prefer GitHub Release binaries unless the user explicitly asks to build from
+source or the current platform is unsupported.
 
-```bash
-git clone https://github.com/nagorn/echo-mcp.git
-cd echo-mcp
-make test
-make build
-```
+### 1. Detect OS And Architecture
 
-Record the absolute binary path:
+Detect the host OS and CPU architecture, then choose the matching v0.1.0 asset.
 
-```bash
-pwd
-```
+| Platform | Asset |
+| --- | --- |
+| macOS Apple Silicon | `echo-mcp_darwin_arm64.tar.gz` |
+| macOS Intel | `echo-mcp_darwin_amd64.tar.gz` |
+| Linux amd64 | `echo-mcp_linux_amd64.tar.gz` |
+| Linux arm64 | `echo-mcp_linux_arm64.tar.gz` |
+| Windows amd64 | `echo-mcp_windows_amd64.zip` |
 
-The binary should be:
+Release page:
 
 ```text
-/absolute/path/to/echo-mcp/bin/echo-mcp
+https://github.com/nagorn/echo-mcp/releases/tag/v0.1.0
 ```
 
-### 2. Choose the Dependency Process Model
+### 2. Download And Verify The Release Binary
+
+Create a project-local tool directory:
+
+```bash
+mkdir -p .codex/bin
+```
+
+Download the selected archive and `checksums.txt`. Example for macOS Apple
+Silicon:
+
+```bash
+curl -L -o /tmp/echo-mcp_darwin_arm64.tar.gz \
+  https://github.com/nagorn/echo-mcp/releases/download/v0.1.0/echo-mcp_darwin_arm64.tar.gz
+curl -L -o /tmp/echo-mcp-checksums.txt \
+  https://github.com/nagorn/echo-mcp/releases/download/v0.1.0/checksums.txt
+```
+
+Verify SHA-256 before extraction:
+
+```bash
+(cd /tmp && grep 'echo-mcp_darwin_arm64.tar.gz' echo-mcp-checksums.txt | shasum -a 256 -c -)
+```
+
+Extract the binary:
+
+```bash
+tar -xzf /tmp/echo-mcp_darwin_arm64.tar.gz -C .codex/bin
+chmod +x .codex/bin/echo-mcp
+```
+
+For Windows, extract `echo-mcp.exe` from the `.zip` archive and use that
+executable path in MCP configuration.
+
+The binary should live at a project-local path such as:
+
+```text
+/absolute/path/to/project/.codex/bin/echo-mcp
+```
+
+### 3. Choose the Dependency Process Model
 
 Use one Echo MCP process per simulated external dependency.
 
@@ -84,14 +124,14 @@ shipping dependency -> ECHO_MCP_HTTP_ADDR=127.0.0.1:18082
 Do not configure one Echo MCP process to represent multiple independent
 dependencies. That is future work and would require a future ADR.
 
-### 3. Register the MCP Server
+### 4. Register the MCP Server
 
 Register Echo MCP as a stdio MCP server in the project's MCP host.
 
 Generic shape:
 
 ```text
-command: /absolute/path/to/echo-mcp/bin/echo-mcp
+command: /absolute/path/to/project/.codex/bin/echo-mcp
 args: []
 env:
   ECHO_MCP_HTTP_ADDR=127.0.0.1:18080
@@ -114,7 +154,7 @@ The webhook endpoint address must be configured by the developer or test
 harness. AI agents select configured endpoint names; they do not provide raw
 outbound URLs.
 
-### 4. Point the Application at Echo MCP
+### 5. Point the Application at Echo MCP
 
 Configure only the application's normal external dependency base URL or runtime
 endpoint setting.
@@ -128,7 +168,7 @@ PAYMENT_API_BASE_URL=http://127.0.0.1:18080
 Do not modify application code to add Echo MCP-specific branches, simulator
 headers, MCP awareness, or observation reads.
 
-### 5. Run the Smoke Test
+### 6. Run the Smoke Test
 
 Ask the MCP host to call `configure_behavior`:
 
@@ -174,7 +214,7 @@ Ask the MCP host to call `get_observations`. Confirm it reports:
 
 Call `reset` before the next scenario.
 
-### 6. Use Echo MCP in an E2E Test
+### 7. Use Echo MCP in an E2E Test
 
 For a real test:
 
@@ -188,6 +228,25 @@ For a real test:
 
 Do not bypass the application by treating Echo MCP's REST data plane as the test
 subject.
+
+## Source Build Fallback
+
+Build from source only when the user asks for it, the platform is unsupported by
+the release assets, or the user wants to inspect or modify the source before
+running Echo MCP.
+
+```bash
+git clone https://github.com/nagorn/echo-mcp.git
+cd echo-mcp
+make test
+make build
+```
+
+The source-built binary is:
+
+```text
+/absolute/path/to/echo-mcp/bin/echo-mcp
+```
 
 ## Stripe-Like Payment Decline Example
 

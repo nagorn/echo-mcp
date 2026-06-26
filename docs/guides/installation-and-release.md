@@ -12,12 +12,57 @@ terms. Commercial or enterprise licensing may be offered separately later.
 
 ## Requirements
 
-- Go `1.26.2` or compatible Go `1.26.x` toolchain.
-- `make`.
 - An MCP host that can run a local stdio MCP server.
+- `curl` or another HTTPS download tool.
+- `shasum`, `sha256sum`, or equivalent SHA-256 verification tool.
+- Go `1.26.2` or compatible Go `1.26.x` toolchain only when building from
+  source.
+- `make` only when building from source.
 - Docker only if you want to build the local container image.
 
-## Install From Source
+## Recommended Install From GitHub Releases
+
+For normal users and AI-assisted installation, prefer release binaries:
+
+```text
+GitHub Releases binary -> verify checksum -> extract -> register as MCP stdio server
+```
+
+Release page:
+
+```text
+https://github.com/nagorn/echo-mcp/releases/tag/v0.1.0
+```
+
+Asset mapping:
+
+| Platform | Asset |
+| --- | --- |
+| macOS Apple Silicon | `echo-mcp_darwin_arm64.tar.gz` |
+| macOS Intel | `echo-mcp_darwin_amd64.tar.gz` |
+| Linux amd64 | `echo-mcp_linux_amd64.tar.gz` |
+| Linux arm64 | `echo-mcp_linux_arm64.tar.gz` |
+| Windows amd64 | `echo-mcp_windows_amd64.zip` |
+
+Example for macOS Apple Silicon:
+
+```bash
+mkdir -p .codex/bin
+curl -L -o /tmp/echo-mcp_darwin_arm64.tar.gz \
+  https://github.com/nagorn/echo-mcp/releases/download/v0.1.0/echo-mcp_darwin_arm64.tar.gz
+curl -L -o /tmp/echo-mcp-checksums.txt \
+  https://github.com/nagorn/echo-mcp/releases/download/v0.1.0/checksums.txt
+(cd /tmp && grep 'echo-mcp_darwin_arm64.tar.gz' echo-mcp-checksums.txt | shasum -a 256 -c -)
+tar -xzf /tmp/echo-mcp_darwin_arm64.tar.gz -C .codex/bin
+chmod +x .codex/bin/echo-mcp
+```
+
+For Windows, extract `echo-mcp.exe` from the `.zip` archive.
+
+## Source Build Fallback
+
+Build from source when developing Echo MCP, running on an unsupported platform,
+or intentionally inspecting or modifying the source before execution.
 
 Clone the public repository:
 
@@ -33,7 +78,7 @@ make test
 make build
 ```
 
-The local binary is written to:
+The source-built binary is written to:
 
 ```text
 ./bin/echo-mcp
@@ -46,7 +91,7 @@ Register Echo MCP in your MCP host as a stdio server.
 Generic configuration shape:
 
 ```text
-command: /absolute/path/to/echo-mcp/bin/echo-mcp
+command: /absolute/path/to/project/.codex/bin/echo-mcp
 args: []
 env:
   ECHO_MCP_HTTP_ADDR=127.0.0.1:18080
@@ -55,6 +100,9 @@ env:
 Client-specific formats differ. Echo MCP does not require a particular MCP host;
 the host only needs to start the binary over stdio and pass environment
 variables.
+
+If you built from source instead, point the command at the source-built
+`bin/echo-mcp` path.
 
 ## Runtime Configuration
 
@@ -98,7 +146,7 @@ application webhook endpoint:
 
 ```bash
 ECHO_MCP_WEBHOOK_ENDPOINT_NAME=payment-events \
-ECHO_MCP_WEBHOOK_ENDPOINT_ADDRESS=http://127.0.0.1:18080/webhooks/payments \
+ECHO_MCP_WEBHOOK_ENDPOINT_ADDRESS=http://127.0.0.1:3000/webhooks/payments \
 ./bin/echo-mcp
 ```
 

@@ -42,14 +42,17 @@ Echo MCP should not be used to hide test-only branches inside application code.
 
 ## Normal Workflow
 
-1. Start the local Echo MCP process for the external dependency being simulated.
-2. Point the application's external dependency base URL or webhook endpoint
+1. Install Echo MCP, preferably from the GitHub Release binary for the current
+   platform. Build from source only for development, unsupported platforms, or
+   deliberate source inspection/modification.
+2. Start the local Echo MCP process for the external dependency being simulated.
+3. Point the application's external dependency base URL or webhook endpoint
    configuration to Echo MCP or to the application webhook receiver under test,
    depending on the scenario.
-3. Use an AI agent, or another MCP client, to configure behavior through MCP.
-4. Run the application test.
-5. Use an AI agent, or another MCP client, to inspect observations through MCP.
-6. Assert the application outcome and the dependency interaction that occurred.
+4. Use an AI agent, or another MCP client, to configure behavior through MCP.
+5. Run the application test.
+6. Use an AI agent, or another MCP client, to inspect observations through MCP.
+7. Assert the application outcome and the dependency interaction that occurred.
 
 The control plane and data plane remain separate throughout the workflow:
 
@@ -163,7 +166,7 @@ webhook endpoint:
 
 ```bash
 ECHO_MCP_WEBHOOK_ENDPOINT_NAME=payment-events \
-ECHO_MCP_WEBHOOK_ENDPOINT_ADDRESS=http://127.0.0.1:18080/webhooks/payments \
+ECHO_MCP_WEBHOOK_ENDPOINT_ADDRESS=http://127.0.0.1:3000/webhooks/payments \
 ./bin/echo-mcp
 ```
 
