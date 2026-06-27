@@ -55,6 +55,36 @@ webhook endpoints selected by endpoint name.
 8. Verify the application's behavior using the project's normal assertions.
 9. Reset Echo MCP between tests or scenarios.
 
+## Workflow Selection
+
+Before configuring Echo MCP, identify the workflow intent:
+
+- `manual_mock`: use for exploration, prototyping, failure simulation, or when
+  the provider contract is unavailable. Manual mocks are not
+  provider-contract validated.
+- `hybrid_validation`: use when a contract exists but manual scenarios remain
+  useful, validation or reporting is available or planned, or migration from
+  manual mocks is desired.
+- `contract_first`: use when provider fidelity matters and an official or
+  internal OpenAPI contract is available. The contract should be the source of
+  truth for paths, request schemas, response schemas, and enums.
+
+If the developer only says "use Echo MCP to mock provider X", do not assume
+contract-backed validation. The fastest working path may be handwritten
+provider-like types and manual scenario fixtures. That can be acceptable for
+`manual_mock`, but it is not the same as contract-backed validation.
+
+When provider contract fidelity matters:
+
+- locate the OpenAPI contract or ask the developer for it before writing
+  provider schemas
+- do not handwrite provider request/response schemas when the contract is
+  available
+- wire Echo MCP validation if the current project setup supports it
+- if validation is unavailable, document the downgrade to `hybrid_validation` or
+  `manual_mock`
+- ask the developer before silently downgrading contract fidelity
+
 ## Rules for Application Code
 
 Keep application code production-like.

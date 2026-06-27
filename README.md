@@ -115,6 +115,30 @@ Current limits:
 - No webhook retries, scheduling, signatures, delivery persistence, AsyncAPI,
   event bus, or inbound public webhook receiver.
 
+## Choosing The Right Echo MCP Workflow
+
+Choose the workflow intent before asking an AI agent to build or test an
+external API integration.
+
+- `manual_mock`: use for exploration, prototyping, simulating failures, or
+  working without an available API contract. Manual mocks remain useful, but
+  they are not provider-contract validated.
+- `hybrid_validation`: use when a contract exists but manual scenarios are
+  still useful, validation or reporting is available or planned, or the project
+  is migrating from manual mocks.
+- `contract_first`: use when external provider fidelity matters, CI should
+  catch schema drift, and an official or internal OpenAPI contract is
+  available. The contract should be the source of truth for paths, request
+  schemas, response schemas, and enums.
+
+If you only say "use Echo MCP to mock provider X", an AI agent may choose the
+fastest working path: handwritten provider-like types and manual scenario
+fixtures. That can be acceptable for `manual_mock` workflows, but it is not the
+same as contract-backed validation.
+
+When provider contract fidelity matters, say so explicitly in the first prompt.
+See [Best Practices](docs/guides/best-practices.md) for prompt templates.
+
 ## Security
 
 Echo MCP is intentionally designed for local development and controlled test
@@ -330,6 +354,7 @@ outbound URLs.
 | Configuration | [Configuration Reference](docs/reference/configuration.md) |
 | MCP tools, prompts, and resources | [MCP Tool Reference](docs/reference/mcp-tools.md) |
 | Unmatched requests | [Unmatched REST Requests](docs/reference/unmatched-rest-requests.md) |
+| Best practices | [Best Practices](docs/guides/best-practices.md) |
 | Developer workflow | [Developer Usage Guide](docs/guides/developer-usage.md) |
 | AI workflow | [AI Agent Usage Guide](docs/guides/ai-agent-usage.md) |
 | Installation | [Installation Guide](docs/guides/installation.md) |
