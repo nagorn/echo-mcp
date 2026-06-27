@@ -22,13 +22,13 @@ networks.
 Current release:
 
 ```text
-v0.1.0
+v0.2.0
 ```
 
 Release page:
 
 ```text
-https://github.com/nagorn/echo-mcp/releases/tag/v0.1.0
+https://github.com/nagorn/echo-mcp/releases/tag/v0.2.0
 ```
 
 ## Choose The Asset
@@ -54,9 +54,9 @@ for macOS Apple Silicon:
 
 ```bash
 curl -L -o /tmp/echo-mcp_darwin_arm64.tar.gz \
-  https://github.com/nagorn/echo-mcp/releases/download/v0.1.0/echo-mcp_darwin_arm64.tar.gz
+  https://github.com/nagorn/echo-mcp/releases/download/v0.2.0/echo-mcp_darwin_arm64.tar.gz
 curl -L -o /tmp/echo-mcp-checksums.txt \
-  https://github.com/nagorn/echo-mcp/releases/download/v0.1.0/checksums.txt
+  https://github.com/nagorn/echo-mcp/releases/download/v0.2.0/checksums.txt
 ```
 
 Verify the SHA-256 checksum:
@@ -79,18 +79,19 @@ MCP server command to point at that executable.
 
 Register Echo MCP in your MCP host as a stdio server.
 
-Generic configuration shape:
+Codex-compatible configuration shape:
 
-```text
-command: /absolute/path/to/project/.codex/bin/echo-mcp
-args: []
-env:
-  ECHO_MCP_HTTP_ADDR=127.0.0.1:18080
+```toml
+[mcp_servers.echo_mcp]
+command = "/absolute/path/to/project/.codex/bin/echo-mcp"
+args = []
+env = { ECHO_MCP_HTTP_ADDR = "127.0.0.1:18080" }
 ```
 
-Client-specific formats differ. Echo MCP does not require a particular MCP host;
-the host only needs to start the binary over stdio and pass environment
-variables.
+The recommended MCP server name is `echo_mcp`; some clients may display tool
+names under that namespace. Client-specific formats differ. Echo MCP does not
+require a particular MCP host; the host only needs to start the binary over
+stdio and pass environment variables.
 
 ## Optional Runtime Configuration
 
@@ -115,12 +116,18 @@ outbound URLs.
 
 After MCP registration:
 
-1. Ask the MCP client to call `configure_behavior` for `GET /hello`.
-2. Send a REST request to `http://127.0.0.1:18080/hello`.
-3. Ask the MCP client to call `get_observations`.
-4. Confirm the observation includes the received request, matched behavior, and
+1. Confirm the MCP client can see Echo MCP initialize instructions.
+2. Confirm `tools/list` includes workflow-aware descriptions.
+3. Confirm `prompts/list` includes four guidance prompts.
+4. Confirm `resources/list` includes four guidance resources.
+5. Ask the MCP client to call `configure_behavior` for `GET /hello`.
+6. Confirm the MCP result includes `configured`, `behavior_id`, and additive
+   guidance fields such as `warnings`, `guidance`, or `suggested_next_actions`.
+7. Send a REST request to `http://127.0.0.1:18080/hello`.
+8. Ask the MCP client to call `get_observations`.
+9. Confirm the observation includes the received request, matched behavior, and
    HTTP outcome.
-5. Call `reset`.
+10. Call `reset`.
 
 Example behavior:
 
@@ -148,6 +155,9 @@ curl -i http://127.0.0.1:18080/hello
 
 In real end-to-end tests, the Application Under Test should make the request
 through its normal external dependency configuration.
+
+Agent guidance is returned only through MCP control-plane surfaces. It does not
+change REST data-plane response bodies.
 
 ## Source Build Fallback
 

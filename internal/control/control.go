@@ -75,6 +75,11 @@ func (p *LocalPlane) ConfigureResponseRule(rule state.ResponseRule) error {
 	return nil
 }
 
+// ContractValidationActive reports whether response rules are validated before storage.
+func (p *LocalPlane) ContractValidationActive() bool {
+	return p.validator != nil
+}
+
 // SendWebhookEvent sends one webhook-style event and records the delivery attempt.
 func (p *LocalPlane) SendWebhookEvent(ctx context.Context, event webhook.Event) (state.WebhookDeliveryObservation, error) {
 	if p.webhookSender == nil {

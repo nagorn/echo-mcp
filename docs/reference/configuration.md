@@ -14,6 +14,20 @@ admin APIs, or production deployment configuration.
 | `ECHO_MCP_WEBHOOK_ENDPOINT_NAME` | No | unset | Name of one registered application webhook endpoint. Required with `ECHO_MCP_WEBHOOK_ENDPOINT_ADDRESS` when webhook delivery is enabled. |
 | `ECHO_MCP_WEBHOOK_ENDPOINT_ADDRESS` | No | unset | Address of the registered application webhook endpoint. Required with `ECHO_MCP_WEBHOOK_ENDPOINT_NAME` when webhook delivery is enabled. |
 
+## Codex MCP Server Name
+
+For Codex, use `echo_mcp` as the recommended MCP server name:
+
+```toml
+[mcp_servers.echo_mcp]
+command = "/absolute/path/to/echo-mcp"
+args = []
+env = { ECHO_MCP_HTTP_ADDR = "127.0.0.1:18080" }
+```
+
+Some MCP clients display tools under a namespace derived from the server name,
+such as `echo_mcp`.
+
 ## REST Data Plane
 
 If `ECHO_MCP_HTTP_ADDR` is unset, Echo MCP listens on:

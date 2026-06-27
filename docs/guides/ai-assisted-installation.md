@@ -18,11 +18,13 @@ After installation:
 - Echo MCP binary is available.
 - Echo MCP is registered as an MCP stdio server.
 - REST data plane is reachable.
+- The AI can discover Echo MCP initialize instructions.
 - The AI can discover the available MCP tools:
   - `configure_behavior`
   - `reset`
   - `get_observations`
   - `send_webhook_event`
+- The AI can discover guidance prompts and resources.
 - The smoke test succeeds.
 - The Application Under Test remains unaware of MCP and Echo MCP.
 
@@ -38,10 +40,13 @@ Recommended discovery order:
    rules, GitHub Copilot instructions, or equivalent.
 3. Project documentation.
 4. Existing E2E test examples.
-5. Available MCP tools.
+5. Available MCP servers and tools.
+6. Echo MCP initialize instructions, prompts, and resources when the server is
+   available.
 
 If Echo MCP is not requested or configured, do not assume it is part of the
-project's test workflow.
+project's test workflow. Echo MCP v0.2.0 does not require or introduce an
+`echo-mcp.yaml` project manifest.
 
 ## Installation Steps
 
@@ -50,7 +55,7 @@ source or the current platform is unsupported.
 
 ### 1. Detect OS And Architecture
 
-Detect the host OS and CPU architecture, then choose the matching v0.1.0 asset.
+Detect the host OS and CPU architecture, then choose the matching v0.2.0 asset.
 
 | Platform | Asset |
 | --- | --- |
@@ -63,7 +68,7 @@ Detect the host OS and CPU architecture, then choose the matching v0.1.0 asset.
 Release page:
 
 ```text
-https://github.com/nagorn/echo-mcp/releases/tag/v0.1.0
+https://github.com/nagorn/echo-mcp/releases/tag/v0.2.0
 ```
 
 ### 2. Download And Verify The Release Binary
@@ -79,9 +84,9 @@ Silicon:
 
 ```bash
 curl -L -o /tmp/echo-mcp_darwin_arm64.tar.gz \
-  https://github.com/nagorn/echo-mcp/releases/download/v0.1.0/echo-mcp_darwin_arm64.tar.gz
+  https://github.com/nagorn/echo-mcp/releases/download/v0.2.0/echo-mcp_darwin_arm64.tar.gz
 curl -L -o /tmp/echo-mcp-checksums.txt \
-  https://github.com/nagorn/echo-mcp/releases/download/v0.1.0/checksums.txt
+  https://github.com/nagorn/echo-mcp/releases/download/v0.2.0/checksums.txt
 ```
 
 Verify SHA-256 before extraction:
@@ -128,14 +133,17 @@ dependencies. That is future work and would require a future ADR.
 
 Register Echo MCP as a stdio MCP server in the project's MCP host.
 
-Generic shape:
+Codex-compatible shape:
 
-```text
-command: /absolute/path/to/project/.codex/bin/echo-mcp
-args: []
-env:
-  ECHO_MCP_HTTP_ADDR=127.0.0.1:18080
+```toml
+[mcp_servers.echo_mcp]
+command = "/absolute/path/to/project/.codex/bin/echo-mcp"
+args = []
+env = { ECHO_MCP_HTTP_ADDR = "127.0.0.1:18080" }
 ```
+
+Use `echo_mcp` as the recommended MCP server name for Codex. Some clients may
+display tool namespaces using this name.
 
 If contract validation is needed, add:
 
@@ -170,7 +178,9 @@ headers, MCP awareness, or observation reads.
 
 ### 6. Run the Smoke Test
 
-Ask the MCP host to call `configure_behavior`:
+First verify the MCP Standard guidance surfaces: initialize instructions,
+workflow-aware `tools/list` descriptions, four guidance prompts, and four
+guidance resources. Then ask the MCP host to call `configure_behavior`:
 
 ```json
 {
@@ -213,6 +223,12 @@ Ask the MCP host to call `get_observations`. Confirm it reports:
 - status code `200`
 
 Call `reset` before the next scenario.
+
+When manual mock behavior is configured, `configure_behavior` may return
+additive `warnings`, `guidance`, and `suggested_next_actions`. Manual mock
+behavior is not provider-contract validated unless OpenAPI-backed validation is
+active. These guidance fields are MCP control-plane output only; they do not
+mutate REST data-plane response bodies.
 
 ### 7. Use Echo MCP in an E2E Test
 

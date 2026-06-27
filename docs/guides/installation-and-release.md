@@ -31,7 +31,7 @@ GitHub Releases binary -> verify checksum -> extract -> register as MCP stdio se
 Release page:
 
 ```text
-https://github.com/nagorn/echo-mcp/releases/tag/v0.1.0
+https://github.com/nagorn/echo-mcp/releases/tag/v0.2.0
 ```
 
 Asset mapping:
@@ -49,9 +49,9 @@ Example for macOS Apple Silicon:
 ```bash
 mkdir -p .codex/bin
 curl -L -o /tmp/echo-mcp_darwin_arm64.tar.gz \
-  https://github.com/nagorn/echo-mcp/releases/download/v0.1.0/echo-mcp_darwin_arm64.tar.gz
+  https://github.com/nagorn/echo-mcp/releases/download/v0.2.0/echo-mcp_darwin_arm64.tar.gz
 curl -L -o /tmp/echo-mcp-checksums.txt \
-  https://github.com/nagorn/echo-mcp/releases/download/v0.1.0/checksums.txt
+  https://github.com/nagorn/echo-mcp/releases/download/v0.2.0/checksums.txt
 (cd /tmp && grep 'echo-mcp_darwin_arm64.tar.gz' echo-mcp-checksums.txt | shasum -a 256 -c -)
 tar -xzf /tmp/echo-mcp_darwin_arm64.tar.gz -C .codex/bin
 chmod +x .codex/bin/echo-mcp
@@ -241,10 +241,10 @@ application/test environment.
 
 ## Release Strategy
 
-Recommended first public version:
+Current public release target:
 
 ```text
-v0.1.0
+v0.2.0
 ```
 
 Use semantic versioning after the first public release. Before `v1.0.0`, minor
@@ -252,21 +252,22 @@ versions may include breaking changes when the release notes call them out.
 
 ## Release Artifact Layout
 
-Do not generate binaries until the maintainer explicitly approves a release.
+Do not publish or upload generated binaries until the maintainer explicitly
+approves the release.
 
-Recommended future GitHub release artifacts:
+Current GitHub release artifact names:
 
 ```text
-echo-mcp_<version>_darwin_arm64.tar.gz
-echo-mcp_<version>_darwin_amd64.tar.gz
-echo-mcp_<version>_linux_arm64.tar.gz
-echo-mcp_<version>_linux_amd64.tar.gz
-echo-mcp_<version>_windows_amd64.zip
-echo-mcp_<version>_checksums.txt
+echo-mcp_darwin_arm64.tar.gz
+echo-mcp_darwin_amd64.tar.gz
+echo-mcp_linux_arm64.tar.gz
+echo-mcp_linux_amd64.tar.gz
+echo-mcp_windows_amd64.zip
+checksums.txt
 ```
 
-Recommended supported operating systems and CPU architectures for the first
-binary release:
+Supported operating systems and CPU architectures for the current
+binary release matrix:
 
 - macOS arm64
 - macOS amd64
@@ -282,7 +283,7 @@ binary artifacts are published.
 Generate SHA-256 checksums for release artifacts:
 
 ```bash
-shasum -a 256 echo-mcp_<version>_* > echo-mcp_<version>_checksums.txt
+shasum -a 256 echo-mcp_* > checksums.txt
 ```
 
 If GoReleaser is adopted, let GoReleaser generate the checksum file and include

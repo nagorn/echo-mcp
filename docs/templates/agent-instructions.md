@@ -42,14 +42,18 @@ webhook endpoints selected by endpoint name.
 
 ## Required Agent Workflow
 
-1. Read the test objective.
-2. Identify the external dependency behavior that must be simulated.
-3. Configure Echo MCP through MCP tools.
-4. Run the E2E test through the application, not by bypassing the application.
-5. Inspect Echo MCP observations before concluding that the dependency
+1. Inspect Echo MCP initialize instructions, tool descriptions, prompts, and
+   resources.
+2. Read the test objective.
+3. Choose `manual_mock`, `hybrid_validation`, or `contract_first` based on the
+   project need and available contracts.
+4. Identify the external dependency behavior that must be simulated.
+5. Configure Echo MCP through MCP tools.
+6. Run the E2E test through the application, not by bypassing the application.
+7. Inspect Echo MCP observations before concluding that the dependency
    interaction behaved as expected.
-6. Verify the application's behavior using the project's normal assertions.
-7. Reset Echo MCP between tests or scenarios.
+8. Verify the application's behavior using the project's normal assertions.
+9. Reset Echo MCP between tests or scenarios.
 
 ## Rules for Application Code
 
@@ -76,12 +80,26 @@ handlers.
 
 Use supported Echo MCP MCP tools only.
 
-Current MVP tools are:
+Current tools are:
 
 - `configure_behavior`
 - `get_observations`
 - `reset`
 - `send_webhook_event`
+
+Current guidance prompts are:
+
+- `echo_mcp_getting_started`
+- `echo_mcp_choose_workflow`
+- `echo_mcp_manual_mock_workflow`
+- `echo_mcp_contract_validation_workflow`
+
+Current guidance resources are:
+
+- `echo://guides/getting-started`
+- `echo://guides/workflows`
+- `echo://guides/manual-mock`
+- `echo://guides/contract-validation`
 
 Configure concrete behavior. Echo MCP is a deterministic execution engine, not
 an AI runtime. Do not expect Echo MCP to infer, generate, expand, or repair
@@ -97,6 +115,11 @@ plane, treat it as missing simulator setup. Inspect available observations and
 test/application logs, configure the missing behavior through MCP, and rerun the
 test. Do not treat Echo MCP's unmatched-request `501` as a simulated provider
 response.
+
+Manual mock behavior is useful for quick exploration, but it is not
+provider-contract validated unless OpenAPI-backed validation is active. If
+fidelity matters, prefer `hybrid_validation` or `contract_first` when available,
+or ask the developer whether a contract exists.
 
 Respect known API contracts. If a developer-provided contract constraint is
 available, configure behavior that conforms to the contract and treat contract
@@ -140,6 +163,8 @@ provide:
 - user management
 - persistence
 - OpenAPI import or generation
+- full OpenAPI-first runtime
+- `echo-mcp.yaml` project manifest
 - built-in public API contracts
 - multi-dependency support inside one Echo MCP process
 - recording or replay

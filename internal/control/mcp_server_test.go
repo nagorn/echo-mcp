@@ -22,6 +22,245 @@ import (
 
 const paymentIntentDeclinedBody = `{"error":{"type":"card_error","code":"card_declined","decline_code":"generic_decline","message":"Your card was declined.","payment_intent":{"id":"pi_123","object":"payment_intent","status":"requires_payment_method"}}}`
 
+func TestMCPInitializeInstructionsExposeAgentGuidance(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	clientSession := connectMCPTestClient(t, ctx, NewMCPServer(New(state.New())))
+	instructions := clientSession.InitializeResult().Instructions
+
+	for _, want := range []string{
+		"controllable API simulation server",
+		"control plane",
+		"REST data plane",
+		"Manual mock behavior",
+		"not contract-validated",
+		"inspect available tools",
+		"guidance prompts/resources",
+		"manual_mock, hybrid_validation, or contract_first",
+	} {
+		if !strings.Contains(instructions, want) {
+			t.Fatalf("initialize instructions missing %q:\n%s", want, instructions)
+		}
+	}
+}
+
+func TestMCPListToolsExposeAgentGuidance(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	clientSession := connectMCPTestClient(t, ctx, NewMCPServer(New(state.New())))
+	result, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools() error = %v", err)
+	}
+
+	tools := toolsByName(result.Tools)
+	for _, name := range []string{"configure_behavior", "reset", "send_webhook_event", "get_observations"} {
+		if _, ok := tools[name]; !ok {
+			t.Fatalf("ListTools() missing %q; tools = %+v", name, toolNames(result.Tools))
+		}
+	}
+
+	configure := requireTool(t, tools, "configure_behavior")
+	for _, want := range []string{
+		"manual mock behavior",
+		"When to use",
+		"When not to use",
+		"not prove provider contract fidelity",
+		"OpenAPI-backed validation",
+		"get_observations",
+	} {
+		if !strings.Contains(configure.Description, want) {
+			t.Fatalf("configure_behavior description missing %q:\n%s", want, configure.Description)
+		}
+	}
+	assertToolAnnotation(t, configure, "Configure REST Behavior", false, ptrBool(false), false, ptrBool(false))
+
+	reset := requireTool(t, tools, "reset")
+	if !strings.Contains(reset.Description, "When to use") || !strings.Contains(reset.Description, "clears configured behavior") {
+		t.Fatalf("reset description is not agent-facing:\n%s", reset.Description)
+	}
+	assertToolAnnotation(t, reset, "Reset Echo MCP State", false, ptrBool(true), true, ptrBool(false))
+
+	sendWebhook := requireTool(t, tools, "send_webhook_event")
+	if !strings.Contains(sendWebhook.Description, "When not to use") || !strings.Contains(sendWebhook.Description, "not for arbitrary outbound URLs") {
+		t.Fatalf("send_webhook_event description is not agent-facing:\n%s", sendWebhook.Description)
+	}
+	assertToolAnnotation(t, sendWebhook, "Send Webhook Event", false, ptrBool(false), false, ptrBool(false))
+
+	observations := requireTool(t, tools, "get_observations")
+	observationDescription := strings.ToLower(observations.Description)
+	if !strings.Contains(observationDescription, "read-only") || !strings.Contains(observations.Description, "test evidence") {
+		t.Fatalf("get_observations description is not agent-facing:\n%s", observations.Description)
+	}
+	assertToolAnnotation(t, observations, "Get Observations", true, nil, true, ptrBool(false))
+}
+
+func TestMCPConfigureBehaviorReturnsManualMockGuidanceOnlyInControlPlane(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	store := state.New()
+	clientSession := connectMCPTestClient(t, ctx, NewMCPServer(New(store)))
+
+	configureResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "configure_behavior",
+		Arguments: map[string]any{
+			"behavior_id": "rule-payment-ok",
+			"match": map[string]any{
+				"method": http.MethodGet,
+				"path":   "/payments/123",
+			},
+			"outcome": map[string]any{
+				"type":        "http_response",
+				"status_code": http.StatusAccepted,
+				"body":        `{"status":"accepted"}`,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("configure_behavior CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, configureResult)
+
+	guidance := decodeStructuredMap(t, configureResult)
+	assertStringSliceContains(t, guidance, "warnings", "Manual mock behavior is active. This behavior is not contract-validated. If provider contract fidelity matters, consider OpenAPI-backed validation or hybrid validation.")
+	assertStringSliceContains(t, guidance, "suggested_next_actions", "Run the application test normally.")
+	assertStringSliceContains(t, guidance, "suggested_next_actions", "Call get_observations to inspect data-plane evidence.")
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	server := httpserver.New(store, logger)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/payments/123", nil))
+
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusAccepted)
+	}
+	if got := response.Body.String(); got != `{"status":"accepted"}` {
+		t.Fatalf("body = %q, want configured body only", got)
+	}
+	if got := response.Header().Get("X-Echo-MCP-Warning"); got != "" {
+		t.Fatalf("X-Echo-MCP-Warning = %q, want no REST data-plane warning header", got)
+	}
+}
+
+func TestMCPConfigureBehaviorOmitsManualMockWarningWhenContractValidationIsActive(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	validator, err := contract.LoadOpenAPIFile(filepath.Join("..", "contract", "testdata", "payment-intent-openapi.json"))
+	if err != nil {
+		t.Fatalf("LoadOpenAPIFile() error = %v", err)
+	}
+	clientSession := connectMCPTestClient(t, ctx, NewMCPServer(NewWithValidator(state.New(), validator)))
+
+	configureResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "configure_behavior",
+		Arguments: map[string]any{
+			"behavior_id": "stripe-like-paymentintent-card-declined",
+			"match": map[string]any{
+				"method": http.MethodPost,
+				"path":   "/v1/payment_intents/pi_123/confirm",
+			},
+			"outcome": map[string]any{
+				"type":         "http_response",
+				"status_code":  http.StatusPaymentRequired,
+				"content_type": "application/json",
+				"body":         paymentIntentDeclinedBody,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("configure_behavior CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, configureResult)
+
+	guidance := decodeStructuredMap(t, configureResult)
+	assertStringSliceNotContains(t, guidance, "warnings", "Manual mock behavior is active.")
+	assertStringSliceContains(t, guidance, "guidance", "Contract validation is active for configured REST behavior.")
+}
+
+func TestMCPPromptsExposeAgentWorkflowGuidance(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	clientSession := connectMCPTestClient(t, ctx, NewMCPServer(New(state.New())))
+	result, err := clientSession.ListPrompts(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListPrompts() error = %v", err)
+	}
+
+	prompts := promptsByName(result.Prompts)
+	for _, name := range []string{
+		"echo_mcp_getting_started",
+		"echo_mcp_choose_workflow",
+		"echo_mcp_manual_mock_workflow",
+		"echo_mcp_contract_validation_workflow",
+	} {
+		if _, ok := prompts[name]; !ok {
+			t.Fatalf("ListPrompts() missing %q; prompts = %+v", name, promptNames(result.Prompts))
+		}
+	}
+
+	prompt, err := clientSession.GetPrompt(ctx, &mcp.GetPromptParams{Name: "echo_mcp_choose_workflow"})
+	if err != nil {
+		t.Fatalf("GetPrompt(echo_mcp_choose_workflow) error = %v", err)
+	}
+	text := promptText(t, prompt)
+	for _, want := range []string{
+		"manual_mock",
+		"hybrid_validation",
+		"contract_first",
+		"not contract-validated",
+		"Do not duplicate API schemas",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("choose workflow prompt missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestMCPResourcesExposeAgentGuides(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	clientSession := connectMCPTestClient(t, ctx, NewMCPServer(New(state.New())))
+	result, err := clientSession.ListResources(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListResources() error = %v", err)
+	}
+
+	resources := resourcesByURI(result.Resources)
+	for _, uri := range []string{
+		"echo://guides/getting-started",
+		"echo://guides/workflows",
+		"echo://guides/manual-mock",
+		"echo://guides/contract-validation",
+	} {
+		if _, ok := resources[uri]; !ok {
+			t.Fatalf("ListResources() missing %q; resources = %+v", uri, resourceURIs(result.Resources))
+		}
+	}
+
+	guide, err := clientSession.ReadResource(ctx, &mcp.ReadResourceParams{URI: "echo://guides/workflows"})
+	if err != nil {
+		t.Fatalf("ReadResource(echo://guides/workflows) error = %v", err)
+	}
+	text := resourceText(t, guide)
+	for _, want := range []string{
+		"guided",
+		"manual_mock",
+		"contract_first",
+		"hybrid_validation",
+		"Echo MCP does not generate behavior",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("workflows resource missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestMCPConfigureBehaviorDrivesRESTDataPlaneAndReportsObservations(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
@@ -527,6 +766,204 @@ func decodeStructuredContent[T any](t *testing.T, result *mcp.CallToolResult) T 
 		t.Fatalf("Unmarshal(StructuredContent) error = %v", err)
 	}
 	return decoded
+}
+
+func decodeStructuredMap(t *testing.T, result *mcp.CallToolResult) map[string]any {
+	t.Helper()
+
+	if result.StructuredContent == nil {
+		t.Fatal("StructuredContent = nil")
+	}
+	payload, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatalf("Marshal(StructuredContent) error = %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("Unmarshal(StructuredContent) error = %v", err)
+	}
+	return decoded
+}
+
+func assertStringSliceContains(t *testing.T, structured map[string]any, key string, want string) {
+	t.Helper()
+
+	values := stringSliceField(t, structured, key)
+	for _, value := range values {
+		if value == want {
+			return
+		}
+	}
+	t.Fatalf("%s = %+v, want value %q", key, values, want)
+}
+
+func assertStringSliceNotContains(t *testing.T, structured map[string]any, key string, unwanted string) {
+	t.Helper()
+
+	if _, ok := structured[key]; !ok {
+		return
+	}
+	values := stringSliceField(t, structured, key)
+	for _, value := range values {
+		if strings.Contains(value, unwanted) {
+			t.Fatalf("%s = %+v, contains unwanted value %q", key, values, unwanted)
+		}
+	}
+}
+
+func stringSliceField(t *testing.T, structured map[string]any, key string) []string {
+	t.Helper()
+
+	raw, ok := structured[key]
+	if !ok {
+		t.Fatalf("StructuredContent missing %q: %+v", key, structured)
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		t.Fatalf("StructuredContent[%q] = %T, want []any", key, raw)
+	}
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		value, ok := item.(string)
+		if !ok {
+			t.Fatalf("StructuredContent[%q] contains %T, want string", key, item)
+		}
+		values = append(values, value)
+	}
+	return values
+}
+
+func toolsByName(tools []*mcp.Tool) map[string]*mcp.Tool {
+	byName := make(map[string]*mcp.Tool, len(tools))
+	for _, tool := range tools {
+		byName[tool.Name] = tool
+	}
+	return byName
+}
+
+func requireTool(t *testing.T, tools map[string]*mcp.Tool, name string) *mcp.Tool {
+	t.Helper()
+
+	tool, ok := tools[name]
+	if !ok {
+		t.Fatalf("tool %q missing", name)
+	}
+	return tool
+}
+
+func toolNames(tools []*mcp.Tool) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+	return names
+}
+
+func assertToolAnnotation(t *testing.T, tool *mcp.Tool, title string, readOnly bool, destructive *bool, idempotent bool, openWorld *bool) {
+	t.Helper()
+
+	if tool.Annotations == nil {
+		t.Fatalf("%s annotations = nil", tool.Name)
+	}
+	if tool.Annotations.Title != title {
+		t.Fatalf("%s annotations.title = %q, want %q", tool.Name, tool.Annotations.Title, title)
+	}
+	if tool.Annotations.ReadOnlyHint != readOnly {
+		t.Fatalf("%s annotations.readOnlyHint = %v, want %v", tool.Name, tool.Annotations.ReadOnlyHint, readOnly)
+	}
+	assertOptionalBool(t, tool.Name, "destructiveHint", tool.Annotations.DestructiveHint, destructive)
+	if tool.Annotations.IdempotentHint != idempotent {
+		t.Fatalf("%s annotations.idempotentHint = %v, want %v", tool.Name, tool.Annotations.IdempotentHint, idempotent)
+	}
+	assertOptionalBool(t, tool.Name, "openWorldHint", tool.Annotations.OpenWorldHint, openWorld)
+}
+
+func assertOptionalBool(t *testing.T, toolName string, field string, got *bool, want *bool) {
+	t.Helper()
+
+	if want == nil {
+		if got != nil {
+			t.Fatalf("%s annotations.%s = %v, want nil", toolName, field, *got)
+		}
+		return
+	}
+	if got == nil {
+		t.Fatalf("%s annotations.%s = nil, want %v", toolName, field, *want)
+	}
+	if *got != *want {
+		t.Fatalf("%s annotations.%s = %v, want %v", toolName, field, *got, *want)
+	}
+}
+
+func ptrBool(value bool) *bool {
+	return &value
+}
+
+func promptsByName(prompts []*mcp.Prompt) map[string]*mcp.Prompt {
+	byName := make(map[string]*mcp.Prompt, len(prompts))
+	for _, prompt := range prompts {
+		byName[prompt.Name] = prompt
+	}
+	return byName
+}
+
+func promptNames(prompts []*mcp.Prompt) []string {
+	names := make([]string, 0, len(prompts))
+	for _, prompt := range prompts {
+		names = append(names, prompt.Name)
+	}
+	return names
+}
+
+func promptText(t *testing.T, result *mcp.GetPromptResult) string {
+	t.Helper()
+
+	if result == nil {
+		t.Fatal("GetPromptResult = nil")
+	}
+	var builder strings.Builder
+	for _, message := range result.Messages {
+		content, ok := message.Content.(*mcp.TextContent)
+		if !ok {
+			t.Fatalf("prompt content = %T, want *mcp.TextContent", message.Content)
+		}
+		builder.WriteString(content.Text)
+		builder.WriteString("\n")
+	}
+	return builder.String()
+}
+
+func resourcesByURI(resources []*mcp.Resource) map[string]*mcp.Resource {
+	byURI := make(map[string]*mcp.Resource, len(resources))
+	for _, resource := range resources {
+		byURI[resource.URI] = resource
+	}
+	return byURI
+}
+
+func resourceURIs(resources []*mcp.Resource) []string {
+	uris := make([]string, 0, len(resources))
+	for _, resource := range resources {
+		uris = append(uris, resource.URI)
+	}
+	return uris
+}
+
+func resourceText(t *testing.T, result *mcp.ReadResourceResult) string {
+	t.Helper()
+
+	if result == nil {
+		t.Fatal("ReadResourceResult = nil")
+	}
+	var builder strings.Builder
+	for _, content := range result.Contents {
+		if content.MIMEType != "text/markdown" {
+			t.Fatalf("resource MIMEType = %q, want text/markdown", content.MIMEType)
+		}
+		builder.WriteString(content.Text)
+		builder.WriteString("\n")
+	}
+	return builder.String()
 }
 
 func equalStrings(left []string, right []string) bool {

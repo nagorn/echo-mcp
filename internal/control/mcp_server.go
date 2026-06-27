@@ -21,11 +21,23 @@ func NewMCPServer(plane Plane) *mcp.Server {
 		plane = New(nil)
 	}
 
-	server := mcp.NewServer(&mcp.Implementation{Name: "echo-mcp", Version: "v0.0.0"}, nil)
+	server := mcp.NewServer(
+		&mcp.Implementation{Name: "echo-mcp", Version: "v0.2.0"},
+		&mcp.ServerOptions{Instructions: serverInstructions},
+	)
+	registerGuidancePrompts(server)
+	registerGuidanceResources(server)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "configure_behavior",
-		Description: "Configure one in-memory REST-style HTTP response behavior.",
+		Description: configureBehaviorDescription,
+		Annotations: &mcp.ToolAnnotations{
+			Title:           "Configure REST Behavior",
+			ReadOnlyHint:    false,
+			DestructiveHint: boolPtr(false),
+			IdempotentHint:  false,
+			OpenWorldHint:   boolPtr(false),
+		},
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input configureBehaviorInput) (*mcp.CallToolResult, configureBehaviorOutput, error) {
 		if err := validateConfigureBehavior(input); err != nil {
 			return nil, configureBehaviorOutput{}, err
@@ -43,28 +55,46 @@ func NewMCPServer(plane Plane) *mcp.Server {
 		}
 
 		return nil, configureBehaviorOutput{
-			Configured: true,
-			BehaviorID: input.BehaviorID,
+			Configured:           true,
+			BehaviorID:           input.BehaviorID,
+			Warnings:             configureBehaviorWarnings(plane),
+			Guidance:             configureBehaviorGuidance(plane),
+			SuggestedNextActions: []string{"Run the application test normally.", "Call get_observations to inspect data-plane evidence."},
 		}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "reset",
-		Description: "Clear configured behavior and observation state.",
+		Description: resetDescription,
+		Annotations: &mcp.ToolAnnotations{
+			Title:           "Reset Echo MCP State",
+			ReadOnlyHint:    false,
+			DestructiveHint: boolPtr(true),
+			IdempotentHint:  true,
+			OpenWorldHint:   boolPtr(false),
+		},
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input resetInput) (*mcp.CallToolResult, resetOutput, error) {
 		if err := plane.Reset(); err != nil {
 			return nil, resetOutput{}, err
 		}
 
 		return nil, resetOutput{
-			Reset:   true,
-			Cleared: []string{"behavior", "observations", "webhook_deliveries"},
+			Reset:                true,
+			Cleared:              []string{"behavior", "observations", "webhook_deliveries"},
+			SuggestedNextActions: []string{"Configure the next behavior or webhook scenario."},
 		}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_webhook_event",
-		Description: "Send one webhook-style event to a configured application webhook endpoint.",
+		Description: sendWebhookEventDescription,
+		Annotations: &mcp.ToolAnnotations{
+			Title:           "Send Webhook Event",
+			ReadOnlyHint:    false,
+			DestructiveHint: boolPtr(false),
+			IdempotentHint:  false,
+			OpenWorldHint:   boolPtr(false),
+		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input sendWebhookEventInput) (*mcp.CallToolResult, sendWebhookEventOutput, error) {
 		if err := validateSendWebhookEvent(input); err != nil {
 			return nil, sendWebhookEventOutput{}, err
@@ -88,17 +118,26 @@ func NewMCPServer(plane Plane) *mcp.Server {
 				StatusCode: delivery.StatusCode,
 				Error:      delivery.Error,
 			},
+			Warnings:             webhookDeliveryWarnings(delivery.Outcome),
+			SuggestedNextActions: []string{"Assert application behavior normally.", "Call get_observations to inspect webhook delivery evidence."},
 		}, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_observations",
-		Description: "Return currently available data-plane observation information.",
+		Description: getObservationsDescription,
+		Annotations: &mcp.ToolAnnotations{
+			Title:          "Get Observations",
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+			OpenWorldHint:  boolPtr(false),
+		},
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input getObservationsInput) (*mcp.CallToolResult, getObservationsOutput, error) {
 		observations := plane.Observations()
 		output := getObservationsOutput{
 			Observations:      make([]observationOutput, 0, len(observations)),
 			WebhookDeliveries: make([]webhookDeliveryObservationOutput, 0, len(plane.WebhookDeliveryObservations())),
+			Guidance:          observationGuidance(len(observations), len(plane.WebhookDeliveryObservations())),
 		}
 
 		for _, observation := range observations {
@@ -154,15 +193,19 @@ type configureBehaviorOutcome struct {
 }
 
 type configureBehaviorOutput struct {
-	Configured bool   `json:"configured"`
-	BehaviorID string `json:"behavior_id"`
+	Configured           bool     `json:"configured"`
+	BehaviorID           string   `json:"behavior_id"`
+	Warnings             []string `json:"warnings,omitempty"`
+	Guidance             []string `json:"guidance,omitempty"`
+	SuggestedNextActions []string `json:"suggested_next_actions,omitempty"`
 }
 
 type resetInput struct{}
 
 type resetOutput struct {
-	Reset   bool     `json:"reset"`
-	Cleared []string `json:"cleared"`
+	Reset                bool     `json:"reset"`
+	Cleared              []string `json:"cleared"`
+	SuggestedNextActions []string `json:"suggested_next_actions,omitempty"`
 }
 
 type sendWebhookEventInput struct {
@@ -176,10 +219,12 @@ type sendWebhookEventRequest struct {
 }
 
 type sendWebhookEventOutput struct {
-	Attempted    bool                  `json:"attempted"`
-	EventID      string                `json:"event_id"`
-	EndpointName string                `json:"endpoint_name"`
-	Delivery     webhookDeliveryOutput `json:"delivery"`
+	Attempted            bool                  `json:"attempted"`
+	EventID              string                `json:"event_id"`
+	EndpointName         string                `json:"endpoint_name"`
+	Delivery             webhookDeliveryOutput `json:"delivery"`
+	Warnings             []string              `json:"warnings,omitempty"`
+	SuggestedNextActions []string              `json:"suggested_next_actions,omitempty"`
 }
 
 type webhookDeliveryOutput struct {
@@ -193,6 +238,7 @@ type getObservationsInput struct{}
 type getObservationsOutput struct {
 	Observations      []observationOutput                `json:"observations"`
 	WebhookDeliveries []webhookDeliveryObservationOutput `json:"webhook_deliveries"`
+	Guidance          []string                           `json:"guidance,omitempty"`
 }
 
 type observationOutput struct {
@@ -257,4 +303,41 @@ func validateSendWebhookEvent(input sendWebhookEventInput) error {
 	}
 
 	return nil
+}
+
+type contractValidationReporter interface {
+	ContractValidationActive() bool
+}
+
+func contractValidationActive(plane Plane) bool {
+	reporter, ok := plane.(contractValidationReporter)
+	return ok && reporter.ContractValidationActive()
+}
+
+func configureBehaviorWarnings(plane Plane) []string {
+	if contractValidationActive(plane) {
+		return nil
+	}
+	return []string{manualMockWarning}
+}
+
+func configureBehaviorGuidance(plane Plane) []string {
+	if contractValidationActive(plane) {
+		return []string{"Contract validation is active for configured REST behavior."}
+	}
+	return []string{"Manual mock behavior is active for configured REST behavior."}
+}
+
+func webhookDeliveryWarnings(outcome string) []string {
+	if outcome == webhook.OutcomeTransportError {
+		return []string{"Webhook delivery transport error. Inspect the configured application webhook endpoint and call get_observations for evidence."}
+	}
+	return nil
+}
+
+func observationGuidance(restObservationCount int, webhookDeliveryCount int) []string {
+	if restObservationCount == 0 && webhookDeliveryCount == 0 {
+		return []string{"No data-plane observations are available. Run the application test or send a webhook event before expecting observations."}
+	}
+	return []string{"Use observations as Echo MCP evidence and keep application behavior assertions in the application test."}
 }

@@ -23,11 +23,15 @@ Recommended discovery order:
    Cursor rules, GitHub Copilot instructions, or equivalent project-specific
    guidance.
 2. Project documentation.
-3. Available MCP tools.
-4. Existing E2E test examples.
+3. Available MCP servers and tools.
+4. Echo MCP initialize instructions, tool descriptions, prompts, and resources
+   when Echo MCP is available.
+5. Existing E2E test examples.
 
 If Echo MCP is not configured for the project, do not assume its presence. The
 AI agent should gracefully continue using the project's normal testing workflow.
+Echo MCP v0.2.0 does not introduce or require an `echo-mcp.yaml` project
+manifest.
 
 ## Core Rule
 
@@ -65,13 +69,22 @@ to developer-configured application webhook endpoints selected by endpoint name.
 
 ## Recommended Workflow
 
-1. Read the test objective.
-2. Identify which external dependency behavior must be simulated.
-3. Configure Echo MCP via MCP.
-4. Run the application E2E test normally.
-5. Inspect Echo MCP observations.
-6. Verify application behavior.
-7. Reset Echo MCP before the next scenario.
+1. Inspect Echo MCP initialize instructions, tool descriptions, prompts, and
+   resources.
+2. Read the test objective.
+3. Choose `manual_mock`, `hybrid_validation`, or `contract_first` based on the
+   project need and available contracts.
+4. Identify which external dependency behavior must be simulated.
+5. Configure Echo MCP via MCP.
+6. Run the application E2E test normally.
+7. Inspect Echo MCP observations.
+8. Verify application behavior.
+9. Reset Echo MCP before the next scenario.
+
+Use `manual_mock` for quick hand-authored behavior. Manual mock behavior is not
+provider-contract validated unless OpenAPI-backed validation is active. Use
+`hybrid_validation` or `contract_first` when a developer-provided OpenAPI
+contract exists and provider fidelity matters.
 
 ## Step Details
 
@@ -107,13 +120,27 @@ Do not add extra simulator behavior unless Echo MCP explicitly supports it.
 
 ### 3. Configure Echo MCP via MCP
 
-Use the MCP control plane to configure behavior. The current MVP control-plane
-tool surface is:
+Use the MCP control plane to configure behavior. The current MCP
+control-plane tool surface is:
 
 - `configure_behavior`
 - `reset`
 - `send_webhook_event`
 - `get_observations`
+
+The current guidance prompts are:
+
+- `echo_mcp_getting_started`
+- `echo_mcp_choose_workflow`
+- `echo_mcp_manual_mock_workflow`
+- `echo_mcp_contract_validation_workflow`
+
+The current guidance resources are:
+
+- `echo://guides/getting-started`
+- `echo://guides/workflows`
+- `echo://guides/manual-mock`
+- `echo://guides/contract-validation`
 
 The application must not call these tools. They are for MCP control-plane
 clients only.
@@ -272,6 +299,15 @@ Echo MCP sends one HTTP `POST` with `Content-Type: application/json` to the
 configured application webhook endpoint. The AI agent then calls
 `get_observations` and verifies the `webhook_deliveries` entry.
 
+## Agent Guidance Compatibility
+
+The v0.2.0 guidance surfaces are MCP-standard and advisory. Agent behavior may
+vary by MCP client, and some clients may not automatically read prompts or
+resources. Structured guidance fields in tool results are additive; strict MCP
+clients should tolerate additional structured output fields.
+
+Control-plane guidance does not change REST data-plane response bodies.
+
 ## Current Limits for AI Agents and MCP Clients
 
 Do not assume Echo MCP supports capabilities that have not been explicitly added.
@@ -293,6 +329,8 @@ Current MVP limits include:
 - no user management
 - no persistence
 - no OpenAPI import or generation
+- no full OpenAPI-first runtime
+- no `echo-mcp.yaml` project manifest
 - no OpenAPI 3.1.x, YAML OpenAPI, or external `$ref` support
 - no built-in public API contracts
 - no multi-dependency support inside one Echo MCP process

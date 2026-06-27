@@ -79,6 +79,14 @@ Current implemented capabilities:
 
 - MCP control plane over stdio.
 - `configure_behavior` for one in-memory REST response rule.
+- MCP initialize instructions with concise agent guidance.
+- Workflow-aware tool descriptions and tool annotations for MCP clients.
+- Guidance prompts for getting started, choosing a workflow, manual mocks, and
+  contract validation.
+- Guidance resources for getting started, workflows, manual mock behavior, and
+  contract validation.
+- Additive `configure_behavior` warnings, guidance, and suggested next actions
+  in MCP control-plane results.
 - REST data plane on `:8080` by default, configurable with
   `ECHO_MCP_HTTP_ADDR`.
 - Configured HTTP status, response body, and optional response content type.
@@ -103,6 +111,7 @@ Current limits:
   audit log, recording, replay, SaaS, or production deployment architecture.
 - No OpenAPI import, OpenAPI generation, OpenAPI 3.1.x, YAML, external `$ref`,
   built-in public API contracts, or vendor-specific simulator behavior.
+- No `echo-mcp.yaml` project manifest and no full OpenAPI-first runtime.
 - No webhook retries, scheduling, signatures, delivery persistence, AsyncAPI,
   event bus, or inbound public webhook receiver.
 
@@ -153,7 +162,7 @@ is written as a deterministic checklist for AI coding assistants.
 Recommended installation path:
 
 1. Download the correct binary archive from
-   [Echo MCP v0.1.0](https://github.com/nagorn/echo-mcp/releases/tag/v0.1.0).
+   [Echo MCP v0.2.0](https://github.com/nagorn/echo-mcp/releases/tag/v0.2.0).
 2. Download `checksums.txt`.
 3. Verify the archive SHA-256 checksum.
 4. Extract the `echo-mcp` binary.
@@ -174,25 +183,28 @@ For example, on macOS Apple Silicon:
 ```bash
 mkdir -p .codex/bin
 curl -L -o /tmp/echo-mcp_darwin_arm64.tar.gz \
-  https://github.com/nagorn/echo-mcp/releases/download/v0.1.0/echo-mcp_darwin_arm64.tar.gz
+  https://github.com/nagorn/echo-mcp/releases/download/v0.2.0/echo-mcp_darwin_arm64.tar.gz
 curl -L -o /tmp/echo-mcp-checksums.txt \
-  https://github.com/nagorn/echo-mcp/releases/download/v0.1.0/checksums.txt
+  https://github.com/nagorn/echo-mcp/releases/download/v0.2.0/checksums.txt
 (cd /tmp && grep 'echo-mcp_darwin_arm64.tar.gz' echo-mcp-checksums.txt | shasum -a 256 -c -)
 tar -xzf /tmp/echo-mcp_darwin_arm64.tar.gz -C .codex/bin
 chmod +x .codex/bin/echo-mcp
 ```
 
-Register Echo MCP as an MCP stdio server in your MCP host:
+Register Echo MCP as an MCP stdio server in your MCP host. For Codex, use a
+server name that is valid as a TOML key, such as `echo_mcp`:
 
-```text
-command: /absolute/path/to/project/.codex/bin/echo-mcp
-args: []
-env:
-  ECHO_MCP_HTTP_ADDR=127.0.0.1:18080
+```toml
+[mcp_servers.echo_mcp]
+command = "/absolute/path/to/project/.codex/bin/echo-mcp"
+args = []
+env = { ECHO_MCP_HTTP_ADDR = "127.0.0.1:18080" }
 ```
 
-Client-specific MCP configuration formats vary. Echo MCP only requires that the
-host starts the binary over stdio and passes any needed environment variables.
+Some clients display tools under a namespace derived from the server name, such
+as `echo_mcp`. Client-specific MCP configuration formats vary. Echo MCP only
+requires that the host starts the binary over stdio and passes any needed
+environment variables.
 
 Building from source is the fallback path for development, unsupported
 platforms, or users who specifically want to inspect or modify the source before
@@ -236,6 +248,13 @@ request, the matched behavior `hello-ok`, the match criteria, and the produced
 HTTP outcome.
 
 Call `reset` before the next scenario.
+
+In v0.2.0, the MCP control plane also exposes agent guidance through initialize
+instructions, tool descriptions and annotations, prompts, resources, and
+additive structured result fields. For manual mock behavior,
+`configure_behavior` can return `warnings`, `guidance`, and
+`suggested_next_actions`; those fields do not modify REST data-plane response
+bodies or headers.
 
 This direct `curl` request is a wiring smoke test. In real end-to-end tests, the
 Application Under Test should make the REST request through its normal external
@@ -309,7 +328,7 @@ outbound URLs.
 | Architecture decisions | [ADRs](docs/adr/) |
 | Concepts | [Scope](docs/concepts/scope.md), [Terminology](docs/concepts/terminology.md), [Core Abstractions](docs/concepts/core-abstractions.md) |
 | Configuration | [Configuration Reference](docs/reference/configuration.md) |
-| MCP tools | [MCP Tool Reference](docs/reference/mcp-tools.md) |
+| MCP tools, prompts, and resources | [MCP Tool Reference](docs/reference/mcp-tools.md) |
 | Unmatched requests | [Unmatched REST Requests](docs/reference/unmatched-rest-requests.md) |
 | Developer workflow | [Developer Usage Guide](docs/guides/developer-usage.md) |
 | AI workflow | [AI Agent Usage Guide](docs/guides/ai-agent-usage.md) |
@@ -333,11 +352,12 @@ Current implemented capabilities:
 
 Current public release:
 
-- `v0.1.0`
+- `v0.2.0`
 
 Active next work:
 
-- Documentation and example hardening based on real project usage.
+- Rerun natural AI-agent experiments against the MCP Standard guidance surfaces.
+- Continue documentation and example hardening based on real project usage.
 
 ## Contributing
 
