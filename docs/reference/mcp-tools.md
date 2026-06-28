@@ -6,11 +6,12 @@ REST data plane and its normal webhook endpoints.
 
 ## Agent Guidance Surfaces
 
-v0.2.0 adds MCP Standard agent guidance surfaces. They are advisory and help MCP
+Echo MCP exposes MCP-standard guidance surfaces. They are advisory and help MCP
 clients choose a workflow before silently defaulting to manual mock behavior.
 
 - `initialize` instructions explain what Echo MCP is, the control-plane/data-plane
-  boundary, manual mock caveats, and recommended first steps.
+  boundary, manual mock caveats, partial contract validation, and recommended
+  first steps.
 - `tools/list` descriptions explain what each tool does, when to use it, when
   not to use it, common next steps, and whether the behavior is manual mock or
   contract-related.
@@ -27,15 +28,16 @@ prompts or resources unless instructed to do so.
 Echo MCP exposes these prompts:
 
 - `echo_mcp_getting_started`: inspect tools, prompts, and resources; choose a
-  workflow; use `configure_behavior` only for REST manual mock behavior; inspect
-  observations; reset between scenarios.
+  workflow; use `configure_behavior` for REST behavior; inspect observations;
+  reset between scenarios.
 - `echo_mcp_choose_workflow`: choose between `manual_mock`, `hybrid_validation`,
   and `contract_first`.
 - `echo_mcp_manual_mock_workflow`: configure exact manual behavior, document the
   non-contract-validated caveat, run the application test, inspect observations,
   and reset.
-- `echo_mcp_contract_validation_workflow`: prefer contract-backed or hybrid
-  validation when an OpenAPI contract exists and provider fidelity matters.
+- `echo_mcp_contract_validation_workflow`: use `load_openapi_contract`,
+  `get_contract_status`, `configure_behavior`, app tests, and `reset` when an
+  OpenAPI contract exists and provider fidelity matters.
 
 ## Resources
 
@@ -51,18 +53,245 @@ runtime behavior, or make Echo MCP OpenAPI-first.
 
 ## Tools
 
-Echo MCP exposes four tools: `configure_behavior`, `send_webhook_event`,
-`get_observations`, and `reset`.
+Echo MCP exposes seven tools:
+
+- `load_openapi_contract`
+- `get_contract_status`
+- `unload_openapi_contract`
+- `configure_behavior`
+- `send_webhook_event`
+- `get_observations`
+- `reset`
+
+## Runtime Contract Workflow
+
+Recommended contract-backed workflow:
+
+1. Obtain or locate a local OpenAPI 3.0 JSON contract.
+2. Start Echo MCP.
+3. Call `load_openapi_contract`.
+4. Call `get_contract_status` and inspect validation capability disclosure.
+5. Call `configure_behavior`.
+6. Let Echo MCP validate the configured response against supported capabilities.
+7. Run app tests against the REST data plane.
+8. Use `reset` between scenarios; the contract remains active.
+9. Use `unload_openapi_contract` only when switching contract contexts.
+
+Strict mode means strict enforcement of the validation capabilities currently
+supported by Echo MCP. It is not full OpenAPI validation.
+
+## Validation Capability Disclosure
+
+When a contract is active, load/status/configure outputs include:
+
+```json
+{
+  "validation_scope": "partial",
+  "validation_capabilities": {
+    "method_path": true,
+    "response_status": true,
+    "response_content_type": true,
+    "response_body": true,
+    "inline_json_response_schema": true,
+    "request_body": false,
+    "request_query": false,
+    "request_headers": false,
+    "path_parameter_schema": false,
+    "ref_resolution": true,
+    "local_ref_resolution": true,
+    "remote_ref_resolution": false,
+    "arrays": true,
+    "enum": true,
+    "allOf": false,
+    "oneOf": false,
+    "anyOf": false,
+    "nullable": true,
+    "additional_properties": true,
+    "additional_properties_schema": false,
+    "openapi_3_1": false,
+    "yaml": false,
+    "remote_fetch": false
+  },
+  "validation_mode_description": "strict means strict enforcement of the validation capabilities currently supported by Echo MCP. It is not full OpenAPI validation."
+}
+```
+
+Supported response schema validation covers common OpenAPI 3.0 JSON object and
+primitive response schemas, required properties, enum, nullable, local internal
+refs, nested local refs, arrays of supported item schemas, and omitted or
+boolean `additionalProperties`.
+
+Unsupported features are diagnosed as unsupported instead of being reported as
+response-body mismatches.
+
+`schemas_count` is the number of component schemas discovered in the loaded
+OpenAPI document. It is not the number of schemas fully supported by Echo MCP's
+validator.
+
+## `load_openapi_contract`
+
+Loads one local OpenAPI 3.0 JSON contract through the MCP control plane. This is
+state-changing and non-destructive. It does not mutate source files, fetch remote
+URLs, introduce provider-specific behavior, or make Echo MCP fully
+OpenAPI-first.
+
+Input:
+
+```json
+{
+  "path": "stripe-openapi.spec3.json",
+  "contract_id": "stripe",
+  "validation_mode": "strict"
+}
+```
+
+Fields:
+
+- `path`: required local filesystem path. Relative paths resolve under
+  `ECHO_MCP_CONTRACT_ROOT`; absolute paths must resolve inside that root.
+- `contract_id`: optional caller-provided active contract identifier.
+- `validation_mode`: optional, one of `strict`, `warn`, or `off`; defaults to
+  `strict`.
+- `force`: optional. Allows replacing the active contract even when behavior is
+  configured. Use carefully because existing behavior would otherwise be
+  silently associated with a different contract.
+
+Success output:
+
+```json
+{
+  "loaded": true,
+  "contract_id": "stripe",
+  "source_path": "stripe-openapi.spec3.json",
+  "openapi_version": "3.0.0",
+  "operations_count": 123,
+  "schemas_count": 456,
+  "validation_mode": "strict",
+  "validation_scope": "partial",
+  "validation_capabilities": {
+    "method_path": true,
+    "response_status": true,
+    "response_content_type": true,
+    "response_body": true,
+    "local_ref_resolution": true,
+    "remote_ref_resolution": false,
+    "request_body": false
+  },
+  "validation_mode_description": "strict means strict enforcement of the validation capabilities currently supported by Echo MCP. It is not full OpenAPI validation.",
+  "unsupported_features": {
+    "oneOf": 3
+  },
+  "warnings": [
+    "Contract contains oneOf schemas (3 occurrence(s)). Echo MCP currently does not validate oneOf composition in this MVP."
+  ],
+  "suggested_next_actions": [
+    "Call get_contract_status.",
+    "Call configure_behavior with contract-valid responses."
+  ]
+}
+```
+
+`source_path` is displayed relative to the contract root when possible, including
+when the caller supplied an absolute in-root path. Denied paths are rejected
+without leaking private outside-root path details.
+
+Common structured error shape:
+
+```json
+{
+  "error": "contract path is outside the allowed contract root",
+  "code": "contract_path_not_allowed",
+  "diagnostics": [
+    "OpenAPI contract paths must resolve under the configured contract root."
+  ]
+}
+```
+
+Other diagnostics include unreadable file, invalid JSON, unsupported OpenAPI
+version, missing paths, schema compilation failure, unresolved refs, cyclic refs,
+and ambiguous route where applicable. Diagnostics avoid including secrets or
+large file contents.
+
+## `get_contract_status`
+
+Returns active contract status. This tool is read-only and idempotent.
+
+Active output:
+
+```json
+{
+  "active": true,
+  "contract_id": "stripe",
+  "source_path": "stripe-openapi.spec3.json",
+  "openapi_version": "3.0.0",
+  "operations_count": 123,
+  "schemas_count": 456,
+  "loaded_at": "2026-06-28T10:00:00Z",
+  "validation_mode": "strict",
+  "validation_scope": "partial",
+  "validation_capabilities": {
+    "method_path": true,
+    "response_status": true,
+    "response_content_type": true,
+    "response_body": true,
+    "local_ref_resolution": true,
+    "remote_ref_resolution": false,
+    "request_body": false
+  },
+  "validation_mode_description": "strict means strict enforcement of the validation capabilities currently supported by Echo MCP. It is not full OpenAPI validation.",
+  "contract_root_configured": true,
+  "contract_root_source": "ECHO_MCP_CONTRACT_ROOT"
+}
+```
+
+Inactive output:
+
+```json
+{
+  "active": false,
+  "message": "No OpenAPI contract is currently loaded.",
+  "contract_root_configured": false,
+  "contract_root_source": "working_directory"
+}
+```
+
+## `unload_openapi_contract`
+
+Clears the active OpenAPI contract. It does not delete files and does not mutate
+source documents.
+
+Safe-state rule: unload is rejected when active behavior exists unless the
+caller passes `force: true`. Echo MCP does not silently invalidate or reassign
+existing configured behavior.
+
+Input:
+
+```json
+{
+  "force": true
+}
+```
+
+Success output:
+
+```json
+{
+  "unloaded": true,
+  "previous_contract_id": "stripe",
+  "suggested_next_actions": [
+    "Call configure_behavior for manual mock mode or load another contract."
+  ]
+}
+```
 
 ## `configure_behavior`
 
-Configures one REST data-plane response rule as manual mock behavior. Successful
-calls replace the currently configured behavior rule.
+Configures one REST data-plane response rule. Successful calls replace the
+currently configured behavior rule.
 
-Use it for quick simulation, exploration, or a documented `manual_mock` workflow.
-Do not use it alone to prove provider contract fidelity. If contract fidelity
-matters, look for OpenAPI-backed validation or ask the developer whether a
-contract is available.
+When no contract is active, this behaves as manual mock behavior and remains
+backward compatible. When a contract is active, Echo MCP validates the configured
+response against the active contract unless validation is explicitly skipped.
 
 Input:
 
@@ -78,6 +307,10 @@ Input:
     "status_code": 200,
     "content_type": "application/json",
     "body": "{\"message\":\"hello\"}"
+  },
+  "validation": {
+    "mode": "strict",
+    "reason": "normal contract-valid behavior"
   }
 }
 ```
@@ -92,9 +325,13 @@ Fields:
 - `outcome.content_type`: optional response content type.
 - `outcome.body`: required response body string. Use an empty string for no
   body.
+- `validation.mode`: optional per-behavior override, one of `strict`, `warn`, or
+  `off`.
+- `validation.reason`: required when `validation.mode` is `off` while a contract
+  is active.
 
-Output includes the original backward-compatible fields plus additive guidance
-fields when applicable:
+With no active contract, output includes backward-compatible fields plus
+additive guidance:
 
 ```json
 {
@@ -113,14 +350,80 @@ fields when applicable:
 }
 ```
 
-Strict MCP clients should tolerate additional structured result fields. The
-guidance fields are returned only through the MCP control plane. Echo MCP does
-not mutate REST data-plane response bodies or headers to carry this warning.
+With an active contract, output includes validation disclosure:
 
-Invalid behavior is rejected and must not replace the currently configured
-behavior. If `ECHO_MCP_OPENAPI_FILE` is configured, Echo MCP validates the
-behavior against the provided OpenAPI 3.0.x JSON contract before accepting it.
-This validation constraint does not import, generate, or own provider contracts.
+```json
+{
+  "configured": true,
+  "behavior_id": "paymentintent-ok",
+  "validation_scope": "partial",
+  "validation_capabilities": {
+    "method_path": true,
+    "response_status": true,
+    "response_content_type": true,
+    "response_body": true,
+    "local_ref_resolution": true,
+    "request_body": false
+  },
+  "validation_mode_description": "strict means strict enforcement of the validation capabilities currently supported by Echo MCP. It is not full OpenAPI validation.",
+  "suggested_next_actions": [
+    "Run the application test normally.",
+    "Call get_observations to inspect data-plane evidence."
+  ]
+}
+```
+
+Intentional fault tests can skip validation explicitly:
+
+```json
+{
+  "behavior_id": "malformed-provider-response",
+  "match": {
+    "method": "GET",
+    "path": "/resource"
+  },
+  "outcome": {
+    "type": "http_response",
+    "status_code": 200,
+    "content_type": "application/json",
+    "body": "{not valid json"
+  },
+  "validation": {
+    "mode": "off",
+    "reason": "intentional malformed response test"
+  }
+}
+```
+
+Warning:
+
+```json
+{
+  "warnings": [
+    "Contract validation was skipped for this behavior: intentional malformed response test."
+  ]
+}
+```
+
+Strict validation failures are returned through the MCP control plane and do not
+change REST data-plane response bodies:
+
+```json
+{
+  "error": "Configured behavior violates the active OpenAPI contract",
+  "code": "contract_validation_failed",
+  "diagnostics": [
+    "response status 418 is not defined for POST /v1/payment_intents"
+  ],
+  "validation_scope": "partial",
+  "validation_capabilities": {
+    "method_path": true,
+    "response_status": true,
+    "response_body": true
+  },
+  "validation_mode_description": "strict means strict enforcement of the validation capabilities currently supported by Echo MCP. It is not full OpenAPI validation."
+}
+```
 
 ## `send_webhook_event`
 
@@ -147,35 +450,9 @@ Input:
 }
 ```
 
-Fields:
-
-- `event_id`: required non-empty string used in delivery observations.
-- `endpoint_name`: required registered endpoint name.
-- `request.body`: required JSON object sent to the application webhook endpoint.
-
 The MVP supports only JSON request bodies. It does not support configurable
 headers, signatures, retries, scheduling, content negotiation, or raw outbound
 URLs supplied by MCP clients.
-
-Output:
-
-```json
-{
-  "attempted": true,
-  "event_id": "evt_payment_failed_001",
-  "endpoint_name": "payment-events",
-  "delivery": {
-    "outcome": "response_received",
-    "status_code": 204
-  },
-  "suggested_next_actions": [
-    "Assert application behavior normally.",
-    "Call get_observations to inspect webhook delivery evidence."
-  ]
-}
-```
-
-Transport failures are delivery outcomes and are recorded in observations.
 
 ## `get_observations`
 
@@ -203,29 +480,17 @@ Output shape:
       }
     }
   ],
-  "webhook_deliveries": [
-    {
-      "event_id": "evt_payment_failed_001",
-      "endpoint_name": "payment-events",
-      "method": "POST",
-      "outcome": "response_received",
-      "status_code": 204
-    }
-  ],
+  "webhook_deliveries": [],
   "guidance": [
     "Use observations as Echo MCP evidence and keep application behavior assertions in the application test."
   ]
 }
 ```
 
-`observations` describes REST data-plane requests. `webhook_deliveries`
-describes webhook delivery attempts. If no observations are available,
-collections are empty.
-
 ## `reset`
 
 Clears configured behavior and currently available observation information. Use
-`reset` between test scenarios.
+`reset` between test scenarios. Reset keeps the active OpenAPI contract loaded.
 
 Input:
 
@@ -239,15 +504,31 @@ Output:
 {
   "reset": true,
   "cleared": ["behavior", "observations", "webhook_deliveries"],
+  "contract_active": true,
+  "contract_id": "stripe",
   "suggested_next_actions": [
     "Configure the next behavior or webhook scenario."
   ]
 }
 ```
 
-## Not Included In v0.2.0
+## Compatibility Corpus
 
-v0.2.0 does not introduce `echo-mcp.yaml`, a project manifest, a full
-OpenAPI-first runtime, provider-specific simulators, or a public contract
-repository. Manual mocks remain supported but do not guarantee provider contract
-fidelity.
+The repository includes a small synthetic OpenAPI corpus under
+`internal/contract/testdata/openapi-corpus/` for inline schemas, local refs,
+nested refs, arrays of refs, required fields, enum, nullable, unresolved refs,
+cyclic refs, and unsupported composition keywords.
+
+`scripts/smoke-openapi-compatibility.sh` can also probe real provider contracts,
+including Stripe OpenAPI and GitHub REST OpenAPI, without making normal unit
+tests depend on network access. Stripe and GitHub are compatibility probes, not
+implementation assumptions.
+
+## Not Included In v0.3.0
+
+v0.3.0 does not introduce `echo-mcp.yaml`, a project manifest, a full
+OpenAPI-first runtime, provider-specific simulators, remote fetching, OpenAPI
+3.1, YAML, remote/file refs, `allOf`/`oneOf`/`anyOf` semantics, request
+body/query/header/path parameter validation, automatic scenario generation, or a
+public contract repository. Manual mocks remain supported but do not guarantee
+provider contract fidelity.

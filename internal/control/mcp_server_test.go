@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,7 +28,17 @@ func TestMCPInitializeInstructionsExposeAgentGuidance(t *testing.T) {
 	t.Cleanup(cancel)
 
 	clientSession := connectMCPTestClient(t, ctx, NewMCPServer(New(state.New())))
-	instructions := clientSession.InitializeResult().Instructions
+	initializeResult := clientSession.InitializeResult()
+	if initializeResult.ServerInfo == nil {
+		t.Fatal("InitializeResult().ServerInfo = nil")
+	}
+	if initializeResult.ServerInfo.Name != "echo-mcp" {
+		t.Fatalf("serverInfo.name = %q, want echo-mcp", initializeResult.ServerInfo.Name)
+	}
+	if initializeResult.ServerInfo.Version != "v0.3.0" {
+		t.Fatalf("serverInfo.version = %q, want v0.3.0", initializeResult.ServerInfo.Version)
+	}
+	instructions := initializeResult.Instructions
 
 	for _, want := range []string{
 		"controllable API simulation server",
@@ -35,6 +46,8 @@ func TestMCPInitializeInstructionsExposeAgentGuidance(t *testing.T) {
 		"REST data plane",
 		"Manual mock behavior",
 		"not contract-validated",
+		"strict means strict enforcement of the validation capabilities currently supported by Echo MCP",
+		"not full OpenAPI validation",
 		"inspect available tools",
 		"guidance prompts/resources",
 		"manual_mock, hybrid_validation, or contract_first",
@@ -56,7 +69,7 @@ func TestMCPListToolsExposeAgentGuidance(t *testing.T) {
 	}
 
 	tools := toolsByName(result.Tools)
-	for _, name := range []string{"configure_behavior", "reset", "send_webhook_event", "get_observations"} {
+	for _, name := range []string{"configure_behavior", "load_openapi_contract", "get_contract_status", "unload_openapi_contract", "reset", "send_webhook_event", "get_observations"} {
 		if _, ok := tools[name]; !ok {
 			t.Fatalf("ListTools() missing %q; tools = %+v", name, toolNames(result.Tools))
 		}
@@ -67,8 +80,11 @@ func TestMCPListToolsExposeAgentGuidance(t *testing.T) {
 		"manual mock behavior",
 		"When to use",
 		"When not to use",
-		"not prove provider contract fidelity",
-		"OpenAPI-backed validation",
+		"call load_openapi_contract first",
+		"validated unless explicitly skipped",
+		"Skipping validation requires a reason",
+		"strict means strict enforcement of the validation capabilities currently supported by Echo MCP",
+		"not full OpenAPI validation",
 		"get_observations",
 	} {
 		if !strings.Contains(configure.Description, want) {
@@ -76,6 +92,36 @@ func TestMCPListToolsExposeAgentGuidance(t *testing.T) {
 		}
 	}
 	assertToolAnnotation(t, configure, "Configure REST Behavior", false, ptrBool(false), false, ptrBool(false))
+
+	loadContract := requireTool(t, tools, "load_openapi_contract")
+	for _, want := range []string{
+		"local file only",
+		"generic OpenAPI",
+		"does not fetch remote URLs",
+		"does not make Echo MCP fully OpenAPI-first",
+		"contract-backed validation",
+		"strict means strict enforcement of the validation capabilities currently supported by Echo MCP",
+	} {
+		if !strings.Contains(loadContract.Description, want) {
+			t.Fatalf("load_openapi_contract description missing %q:\n%s", want, loadContract.Description)
+		}
+	}
+	assertToolAnnotation(t, loadContract, "Load OpenAPI Contract", false, ptrBool(false), false, ptrBool(false))
+
+	contractStatus := requireTool(t, tools, "get_contract_status")
+	if !strings.Contains(strings.ToLower(contractStatus.Description), "read-only") || !strings.Contains(contractStatus.Description, "active OpenAPI contract") {
+		t.Fatalf("get_contract_status description is not agent-facing:\n%s", contractStatus.Description)
+	}
+	if !strings.Contains(contractStatus.Description, "not full OpenAPI validation") {
+		t.Fatalf("get_contract_status description does not disclose partial validation:\n%s", contractStatus.Description)
+	}
+	assertToolAnnotation(t, contractStatus, "Get Contract Status", true, nil, true, ptrBool(false))
+
+	unloadContract := requireTool(t, tools, "unload_openapi_contract")
+	if !strings.Contains(unloadContract.Description, "does not delete files") || !strings.Contains(unloadContract.Description, "force") {
+		t.Fatalf("unload_openapi_contract description is not safe-state oriented:\n%s", unloadContract.Description)
+	}
+	assertToolAnnotation(t, unloadContract, "Unload OpenAPI Contract", false, ptrBool(false), false, ptrBool(false))
 
 	reset := requireTool(t, tools, "reset")
 	if !strings.Contains(reset.Description, "When to use") || !strings.Contains(reset.Description, "clears configured behavior") {
@@ -128,6 +174,12 @@ func TestMCPConfigureBehaviorReturnsManualMockGuidanceOnlyInControlPlane(t *test
 	assertStringSliceContains(t, guidance, "warnings", "Manual mock behavior is active. This behavior is not contract-validated. If provider contract fidelity matters, consider OpenAPI-backed validation or hybrid validation.")
 	assertStringSliceContains(t, guidance, "suggested_next_actions", "Run the application test normally.")
 	assertStringSliceContains(t, guidance, "suggested_next_actions", "Call get_observations to inspect data-plane evidence.")
+	if _, ok := guidance["validation_scope"]; ok {
+		t.Fatalf("manual configure output unexpectedly included validation_scope: %+v", guidance)
+	}
+	if _, ok := guidance["validation_capabilities"]; ok {
+		t.Fatalf("manual configure output unexpectedly included validation_capabilities: %+v", guidance)
+	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	server := httpserver.New(store, logger)
@@ -213,6 +265,7 @@ func TestMCPPromptsExposeAgentWorkflowGuidance(t *testing.T) {
 		"hybrid_validation",
 		"contract_first",
 		"not contract-validated",
+		"not full OpenAPI validation",
 		"Do not duplicate API schemas",
 	} {
 		if !strings.Contains(text, want) {
@@ -253,6 +306,7 @@ func TestMCPResourcesExposeAgentGuides(t *testing.T) {
 		"manual_mock",
 		"contract_first",
 		"hybrid_validation",
+		"not full OpenAPI validation",
 		"Echo MCP does not generate behavior",
 	} {
 		if !strings.Contains(text, want) {
@@ -409,6 +463,385 @@ func TestMCPResetClearsConfiguredBehaviorAndObservations(t *testing.T) {
 	}
 }
 
+func TestMCPRuntimeOpenAPIContractLifecycle(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	store := state.New()
+	clientSession, sourcePath := connectMCPTestClientWithPaymentIntentContractRoot(t, ctx, store)
+
+	statusResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_contract_status",
+		Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("get_contract_status CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, statusResult)
+	inactive := decodeStructuredContent[getContractStatusOutput](t, statusResult)
+	if inactive.Active {
+		t.Fatal("status active = true before load, want false")
+	}
+	if inactive.Message != "No OpenAPI contract is currently loaded." {
+		t.Fatalf("inactive message = %q", inactive.Message)
+	}
+	if !inactive.ContractRootConfigured {
+		t.Fatal("inactive contract_root_configured = false, want true")
+	}
+	if inactive.ContractRootSource != ContractRootSourceEnv {
+		t.Fatalf("inactive contract_root_source = %q, want %q", inactive.ContractRootSource, ContractRootSourceEnv)
+	}
+
+	loadResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "load_openapi_contract",
+		Arguments: map[string]any{
+			"path":            sourcePath,
+			"contract_id":     "stripe",
+			"validation_mode": "strict",
+		},
+	})
+	if err != nil {
+		t.Fatalf("load_openapi_contract CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, loadResult)
+	loaded := decodeStructuredContent[loadOpenAPIContractOutput](t, loadResult)
+	if !loaded.Loaded {
+		t.Fatal("loaded = false, want true")
+	}
+	if loaded.ContractID != "stripe" {
+		t.Fatalf("contract_id = %q, want stripe", loaded.ContractID)
+	}
+	if loaded.SourcePath != sourcePath {
+		t.Fatalf("source_path = %q, want %q", loaded.SourcePath, sourcePath)
+	}
+	if loaded.OpenAPIVersion != "3.0.3" {
+		t.Fatalf("openapi_version = %q, want 3.0.3", loaded.OpenAPIVersion)
+	}
+	if loaded.OperationsCount != 1 {
+		t.Fatalf("operations_count = %d, want 1", loaded.OperationsCount)
+	}
+	if loaded.SchemasCount != 0 {
+		t.Fatalf("schemas_count = %d, want 0 component schemas", loaded.SchemasCount)
+	}
+	if loaded.ValidationMode != "strict" {
+		t.Fatalf("validation_mode = %q, want strict", loaded.ValidationMode)
+	}
+	assertPartialValidationDisclosure(t, loaded.ValidationScope, loaded.ValidationCapabilities, loaded.ValidationModeDescription)
+	assertStringSliceContains(t, decodeStructuredMap(t, loadResult), "suggested_next_actions", "Call get_contract_status.")
+
+	statusResult, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_contract_status",
+		Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("get_contract_status after load CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, statusResult)
+	active := decodeStructuredContent[getContractStatusOutput](t, statusResult)
+	if !active.Active {
+		t.Fatal("status active = false after load, want true")
+	}
+	if active.ContractID != "stripe" {
+		t.Fatalf("status contract_id = %q, want stripe", active.ContractID)
+	}
+	if active.LoadedAt == "" {
+		t.Fatal("loaded_at is empty, want timestamp")
+	}
+	if !active.ContractRootConfigured {
+		t.Fatal("active contract_root_configured = false, want true")
+	}
+	if active.ContractRootSource != ContractRootSourceEnv {
+		t.Fatalf("active contract_root_source = %q, want %q", active.ContractRootSource, ContractRootSourceEnv)
+	}
+	assertPartialValidationDisclosure(t, active.ValidationScope, active.ValidationCapabilities, active.ValidationModeDescription)
+
+	configureResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "configure_behavior",
+		Arguments: map[string]any{
+			"behavior_id": "stripe-like-paymentintent-card-declined",
+			"match": map[string]any{
+				"method": http.MethodPost,
+				"path":   "/v1/payment_intents/pi_123/confirm",
+			},
+			"outcome": map[string]any{
+				"type":         "http_response",
+				"status_code":  http.StatusPaymentRequired,
+				"content_type": "application/json",
+				"body":         paymentIntentDeclinedBody,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("configure_behavior CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, configureResult)
+	configured := decodeStructuredContent[configureBehaviorOutput](t, configureResult)
+	assertPartialValidationDisclosure(t, configured.ValidationScope, configured.ValidationCapabilities, configured.ValidationModeDescription)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	server := httpserver.New(store, logger)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/payment_intents/pi_123/confirm", nil))
+	if response.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusPaymentRequired)
+	}
+	if got := response.Body.String(); got != paymentIntentDeclinedBody {
+		t.Fatalf("body = %q, want configured body", got)
+	}
+
+	resetResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "reset",
+		Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("reset CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, resetResult)
+	reset := decodeStructuredContent[resetOutput](t, resetResult)
+	if !reset.ContractActive {
+		t.Fatal("reset contract_active = false, want true")
+	}
+	if reset.ContractID != "stripe" {
+		t.Fatalf("reset contract_id = %q, want stripe", reset.ContractID)
+	}
+
+	statusResult, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_contract_status",
+		Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("get_contract_status after reset CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, statusResult)
+	activeAfterReset := decodeStructuredContent[getContractStatusOutput](t, statusResult)
+	if !activeAfterReset.Active {
+		t.Fatal("status active = false after reset, want true")
+	}
+
+	unloadResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "unload_openapi_contract",
+		Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("unload_openapi_contract CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, unloadResult)
+	unloaded := decodeStructuredContent[unloadOpenAPIContractOutput](t, unloadResult)
+	if !unloaded.Unloaded {
+		t.Fatal("unloaded = false, want true")
+	}
+	if unloaded.PreviousContractID != "stripe" {
+		t.Fatalf("previous_contract_id = %q, want stripe", unloaded.PreviousContractID)
+	}
+
+	statusResult, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_contract_status",
+		Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("get_contract_status after unload CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, statusResult)
+	statusAfterUnload := decodeStructuredContent[getContractStatusOutput](t, statusResult)
+	if statusAfterUnload.Active {
+		t.Fatal("status active = true after unload, want false")
+	}
+}
+
+func TestMCPRuntimeOpenAPIContractLoadReturnsStructuredDiagnostics(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	clientSession, _ := connectMCPTestClientWithContractRoot(t, ctx, state.New(), t.TempDir())
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "load_openapi_contract",
+		Arguments: map[string]any{
+			"path": "missing-openapi.json",
+		},
+	})
+	if err != nil {
+		t.Fatalf("load_openapi_contract CallTool() protocol error = %v", err)
+	}
+	toolError := assertStructuredToolError(t, result)
+	if toolError.Code != "unreadable_file" {
+		t.Fatalf("error code = %q, want unreadable_file", toolError.Code)
+	}
+	if len(toolError.Diagnostics) == 0 {
+		t.Fatal("diagnostics empty, want diagnostic details")
+	}
+}
+
+func TestMCPLoadOpenAPIContractRejectsPathOutsideContractRoot(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	root := t.TempDir()
+	clientSession, _ := connectMCPTestClientWithContractRoot(t, ctx, state.New(), root)
+	outsidePath := filepath.Join(t.TempDir(), "outside-openapi.json")
+	if err := os.WriteFile(outsidePath, []byte(`{"openapi":"3.0.3","paths":{}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "load_openapi_contract",
+		Arguments: map[string]any{
+			"path": outsidePath,
+		},
+	})
+	if err != nil {
+		t.Fatalf("load_openapi_contract CallTool() protocol error = %v", err)
+	}
+	toolError := assertStructuredToolError(t, result)
+	if toolError.Code != "contract_path_not_allowed" {
+		t.Fatalf("error code = %q, want contract_path_not_allowed", toolError.Code)
+	}
+	if toolError.Error != "contract path is outside the allowed contract root" {
+		t.Fatalf("error = %q, want outside-root message", toolError.Error)
+	}
+	if len(toolError.Diagnostics) != 1 || toolError.Diagnostics[0] != "OpenAPI contract paths must resolve under the configured contract root." {
+		t.Fatalf("diagnostics = %+v, want safe outside-root diagnostic", toolError.Diagnostics)
+	}
+	diagnostics := strings.Join(toolError.Diagnostics, "\n")
+	if strings.Contains(diagnostics, outsidePath) || strings.Contains(diagnostics, root) {
+		t.Fatalf("diagnostics leak local paths: %+v", toolError.Diagnostics)
+	}
+}
+
+func TestMCPLoadOpenAPIContractSanitizesAbsoluteInRootSourcePath(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	root := t.TempDir()
+	relativePath := filepath.Join("contracts", "payment-intent-openapi.json")
+	copyMCPContractFixture(t, root, relativePath)
+	clientSession, _ := connectMCPTestClientWithContractRoot(t, ctx, state.New(), root)
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "load_openapi_contract",
+		Arguments: map[string]any{
+			"path":        filepath.Join(root, relativePath),
+			"contract_id": "absolute-in-root",
+		},
+	})
+	if err != nil {
+		t.Fatalf("load_openapi_contract CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, result)
+	loaded := decodeStructuredContent[loadOpenAPIContractOutput](t, result)
+	if loaded.SourcePath != relativePath {
+		t.Fatalf("source_path = %q, want relative display path %q", loaded.SourcePath, relativePath)
+	}
+	if strings.Contains(loaded.SourcePath, root) {
+		t.Fatalf("source_path leaks contract root: %q", loaded.SourcePath)
+	}
+
+	statusResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_contract_status",
+		Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("get_contract_status CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, statusResult)
+	status := decodeStructuredContent[getContractStatusOutput](t, statusResult)
+	if status.SourcePath != relativePath {
+		t.Fatalf("status source_path = %q, want relative display path %q", status.SourcePath, relativePath)
+	}
+	if strings.Contains(status.SourcePath, root) {
+		t.Fatalf("status source_path leaks contract root: %q", status.SourcePath)
+	}
+}
+
+func TestMCPLoadOpenAPIContractWarnsForUnsupportedSchemaFeatures(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	root := t.TempDir()
+	clientSession, _ := connectMCPTestClientWithContractRoot(t, ctx, state.New(), root)
+	sourcePath := writeUnsupportedFeatureOpenAPI(t, root)
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "load_openapi_contract",
+		Arguments: map[string]any{
+			"path":        sourcePath,
+			"contract_id": "stripe-ref-like",
+		},
+	})
+	if err != nil {
+		t.Fatalf("load_openapi_contract CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, result)
+	output := decodeStructuredContent[loadOpenAPIContractOutput](t, result)
+	assertPartialValidationDisclosure(t, output.ValidationScope, output.ValidationCapabilities, output.ValidationModeDescription)
+	assertStringSliceContainsSubstring(t, decodeStructuredMap(t, result), "warnings", "contains oneOf schemas")
+	if output.UnsupportedFeatures["oneOf"] == 0 {
+		t.Fatalf("unsupported_features[oneOf] = 0, want positive count: %+v", output.UnsupportedFeatures)
+	}
+	if output.UnsupportedFeatures["$ref"] != 0 {
+		t.Fatalf("unsupported_features[$ref] = %d, want 0 for supported local refs", output.UnsupportedFeatures["$ref"])
+	}
+	if output.UnsupportedFeatures["arrays"] != 0 {
+		t.Fatalf("unsupported_features[arrays] = %d, want 0 for supported arrays", output.UnsupportedFeatures["arrays"])
+	}
+}
+
+func TestMCPUnloadOpenAPIContractRejectsActiveBehaviorUnlessForced(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	clientSession, sourcePath := connectMCPTestClientWithPaymentIntentContractRoot(t, ctx, state.New())
+	loadStrictContract(t, ctx, clientSession, sourcePath)
+	configureValidPaymentIntentBehavior(t, ctx, clientSession)
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "unload_openapi_contract",
+		Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("unload_openapi_contract CallTool() protocol error = %v", err)
+	}
+	toolError := assertStructuredToolError(t, result)
+	if toolError.Code != "reset_required" {
+		t.Fatalf("error code = %q, want reset_required", toolError.Code)
+	}
+
+	forced, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "unload_openapi_contract",
+		Arguments: map[string]any{
+			"force": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("forced unload_openapi_contract CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, forced)
+}
+
+func TestMCPLoadOpenAPIContractRejectsContractSwitchWhenBehaviorIsActive(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	clientSession, sourcePath := connectMCPTestClientWithPaymentIntentContractRoot(t, ctx, state.New())
+	loadStrictContract(t, ctx, clientSession, sourcePath)
+	configureValidPaymentIntentBehavior(t, ctx, clientSession)
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "load_openapi_contract",
+		Arguments: map[string]any{
+			"path":        sourcePath,
+			"contract_id": "stripe-v2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("load_openapi_contract CallTool() protocol error = %v", err)
+	}
+	toolError := assertStructuredToolError(t, result)
+	if toolError.Code != "reset_required" {
+		t.Fatalf("error code = %q, want reset_required", toolError.Code)
+	}
+}
+
 func TestMCPConfigureBehaviorValidatesAgainstOpenAPIContract(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
@@ -517,6 +950,265 @@ func TestMCPConfigureBehaviorRejectsContractViolationWithoutReplacingCurrentRule
 	if got := response.Body.String(); got != paymentIntentDeclinedBody {
 		t.Fatalf("body after rejected rule = %q, want previous body %q", got, paymentIntentDeclinedBody)
 	}
+}
+
+func TestMCPConfigureBehaviorStrictModeRejectsContractViolations(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	tests := []struct {
+		name     string
+		match    map[string]any
+		outcome  map[string]any
+		wantCode string
+	}{
+		{
+			name: "unknown path",
+			match: map[string]any{
+				"method": http.MethodPost,
+				"path":   "/v1/unknown",
+			},
+			outcome: map[string]any{
+				"type":         "http_response",
+				"status_code":  http.StatusPaymentRequired,
+				"content_type": "application/json",
+				"body":         paymentIntentDeclinedBody,
+			},
+			wantCode: "contract_validation_failed",
+		},
+		{
+			name: "invalid status",
+			match: map[string]any{
+				"method": http.MethodPost,
+				"path":   "/v1/payment_intents/pi_123/confirm",
+			},
+			outcome: map[string]any{
+				"type":         "http_response",
+				"status_code":  http.StatusOK,
+				"content_type": "application/json",
+				"body":         `{"ok":true}`,
+			},
+			wantCode: "contract_validation_failed",
+		},
+		{
+			name: "invalid content type",
+			match: map[string]any{
+				"method": http.MethodPost,
+				"path":   "/v1/payment_intents/pi_123/confirm",
+			},
+			outcome: map[string]any{
+				"type":         "http_response",
+				"status_code":  http.StatusPaymentRequired,
+				"content_type": "text/plain",
+				"body":         paymentIntentDeclinedBody,
+			},
+			wantCode: "contract_validation_failed",
+		},
+		{
+			name: "invalid response body",
+			match: map[string]any{
+				"method": http.MethodPost,
+				"path":   "/v1/payment_intents/pi_123/confirm",
+			},
+			outcome: map[string]any{
+				"type":         "http_response",
+				"status_code":  http.StatusPaymentRequired,
+				"content_type": "application/json",
+				"body":         `{"error":{"type":"card_error"}}`,
+			},
+			wantCode: "contract_validation_failed",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			clientSession, sourcePath := connectMCPTestClientWithPaymentIntentContractRoot(t, ctx, state.New())
+			loadStrictContract(t, ctx, clientSession, sourcePath)
+
+			result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+				Name: "configure_behavior",
+				Arguments: map[string]any{
+					"behavior_id": "contract-violation",
+					"match":       tt.match,
+					"outcome":     tt.outcome,
+				},
+			})
+			if err != nil {
+				t.Fatalf("configure_behavior CallTool() protocol error = %v", err)
+			}
+			toolError := assertStructuredToolError(t, result)
+			if toolError.Code != tt.wantCode {
+				t.Fatalf("error code = %q, want %q", toolError.Code, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestMCPConfigureBehaviorRejectsUnsupportedFeatureAfterLocalRefResolution(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	root := t.TempDir()
+	clientSession, _ := connectMCPTestClientWithContractRoot(t, ctx, state.New(), root)
+	sourcePath := writeUnsupportedFeatureOpenAPI(t, root)
+
+	loadResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "load_openapi_contract",
+		Arguments: map[string]any{
+			"path":        sourcePath,
+			"contract_id": "stripe-ref-like",
+		},
+	})
+	if err != nil {
+		t.Fatalf("load_openapi_contract CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, loadResult)
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "configure_behavior",
+		Arguments: map[string]any{
+			"behavior_id": "stripe-paymentintent-create-success",
+			"match": map[string]any{
+				"method": http.MethodPost,
+				"path":   "/v1/payment_intents",
+			},
+			"outcome": map[string]any{
+				"type":         "http_response",
+				"status_code":  http.StatusOK,
+				"content_type": "application/json",
+				"body":         `{"id":"pi_123","object":"payment_intent","status":"requires_payment_method"}`,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("configure_behavior CallTool() protocol error = %v", err)
+	}
+	toolError := assertStructuredToolError(t, result)
+	if toolError.Code != "unsupported_contract_feature" {
+		t.Fatalf("error code = %q, want unsupported_contract_feature", toolError.Code)
+	}
+	assertPartialValidationDisclosure(t, toolError.ValidationScope, toolError.ValidationCapabilities, toolError.ValidationModeDescription)
+	diagnostics := strings.Join(toolError.Diagnostics, "\n")
+	for _, want := range []string{
+		`schema path "$" contains unsupported oneOf`,
+		"oneOf validation is unsupported in this MVP",
+		"behavior was not validated",
+		"use validation.mode=off with reason",
+		"use a reduced/inline schema fixture",
+		"wait for oneOf support",
+	} {
+		if !strings.Contains(diagnostics, want) {
+			t.Fatalf("diagnostics missing %q:\n%s", want, diagnostics)
+		}
+	}
+	if strings.Contains(toolError.Error, "violates") {
+		t.Fatalf("error implies behavior invalid rather than unsupported schema: %q", toolError.Error)
+	}
+}
+
+func TestMCPConfigureBehaviorWarnModeAcceptsContractViolationWithWarning(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	clientSession, sourcePath := connectMCPTestClientWithPaymentIntentContractRoot(t, ctx, state.New())
+	loadResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "load_openapi_contract",
+		Arguments: map[string]any{
+			"path":            sourcePath,
+			"contract_id":     "stripe",
+			"validation_mode": "warn",
+		},
+	})
+	if err != nil {
+		t.Fatalf("load_openapi_contract CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, loadResult)
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "configure_behavior",
+		Arguments: map[string]any{
+			"behavior_id": "intentional-contract-warning",
+			"match": map[string]any{
+				"method": http.MethodPost,
+				"path":   "/v1/unknown",
+			},
+			"outcome": map[string]any{
+				"type":         "http_response",
+				"status_code":  http.StatusOK,
+				"content_type": "application/json",
+				"body":         `{"ok":true}`,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("configure_behavior CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, result)
+	output := decodeStructuredMap(t, result)
+	assertStringSliceContainsSubstring(t, output, "warnings", "Contract validation warning")
+}
+
+func TestMCPConfigureBehaviorOffModeRequiresReasonAndAcceptsIntentionalFault(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	clientSession, sourcePath := connectMCPTestClientWithPaymentIntentContractRoot(t, ctx, state.New())
+	loadStrictContract(t, ctx, clientSession, sourcePath)
+
+	missingReason, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "configure_behavior",
+		Arguments: map[string]any{
+			"behavior_id": "invalid-without-reason",
+			"match": map[string]any{
+				"method": http.MethodPost,
+				"path":   "/v1/payment_intents/pi_123/confirm",
+			},
+			"outcome": map[string]any{
+				"type":         "http_response",
+				"status_code":  http.StatusPaymentRequired,
+				"content_type": "text/plain",
+				"body":         `not-json`,
+			},
+			"validation": map[string]any{
+				"mode": "off",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("configure_behavior missing reason CallTool() protocol error = %v", err)
+	}
+	toolError := assertStructuredToolError(t, missingReason)
+	if toolError.Code != "validation_reason_required" {
+		t.Fatalf("error code = %q, want validation_reason_required", toolError.Code)
+	}
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "configure_behavior",
+		Arguments: map[string]any{
+			"behavior_id": "intentional-malformed-response",
+			"match": map[string]any{
+				"method": http.MethodPost,
+				"path":   "/v1/payment_intents/pi_123/confirm",
+			},
+			"outcome": map[string]any{
+				"type":         "http_response",
+				"status_code":  http.StatusPaymentRequired,
+				"content_type": "text/plain",
+				"body":         `not-json`,
+			},
+			"validation": map[string]any{
+				"mode":   "off",
+				"reason": "intentional malformed response test",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("configure_behavior off mode CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, result)
+	output := decodeStructuredMap(t, result)
+	assertStringSliceContains(t, output, "warnings", "Contract validation was skipped for this behavior: intentional malformed response test.")
 }
 
 func TestMCPSendWebhookEventDeliversToConfiguredEndpointAndReportsObservation(t *testing.T) {
@@ -740,6 +1432,38 @@ func connectMCPTestClient(t *testing.T, ctx context.Context, server *mcp.Server)
 	return clientSession
 }
 
+func connectMCPTestClientWithPaymentIntentContractRoot(t *testing.T, ctx context.Context, store *state.Store) (*mcp.ClientSession, string) {
+	t.Helper()
+	root := t.TempDir()
+	sourcePath := filepath.Join("contracts", "payment-intent-openapi.json")
+	copyMCPContractFixture(t, root, sourcePath)
+	return connectMCPTestClientWithContractRoot(t, ctx, store, root)
+}
+
+func connectMCPTestClientWithContractRoot(t *testing.T, ctx context.Context, store *state.Store, root string) (*mcp.ClientSession, string) {
+	t.Helper()
+	manager, err := NewContractManagerWithContractRoot(root, ContractRootSourceEnv)
+	if err != nil {
+		t.Fatalf("NewContractManagerWithContractRoot() error = %v", err)
+	}
+	return connectMCPTestClient(t, ctx, NewMCPServer(NewWithContractManager(store, manager, nil))), filepath.Join("contracts", "payment-intent-openapi.json")
+}
+
+func copyMCPContractFixture(t *testing.T, root string, relativePath string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "contract", "testdata", "payment-intent-openapi.json"))
+	if err != nil {
+		t.Fatalf("ReadFile() fixture error = %v", err)
+	}
+	fullPath := filepath.Join(root, relativePath)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(fullPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+}
+
 func assertToolSuccess(t *testing.T, result *mcp.CallToolResult) {
 	t.Helper()
 
@@ -749,6 +1473,180 @@ func assertToolSuccess(t *testing.T, result *mcp.CallToolResult) {
 	if result.IsError {
 		t.Fatalf("tool result IsError = true; content = %+v", result.Content)
 	}
+}
+
+func assertStructuredToolError(t *testing.T, result *mcp.CallToolResult) toolErrorOutput {
+	t.Helper()
+
+	if result == nil {
+		t.Fatal("tool result = nil")
+	}
+	if !result.IsError {
+		t.Fatalf("tool result IsError = false, want true; content = %+v", result.Content)
+	}
+	return decodeStructuredContent[toolErrorOutput](t, result)
+}
+
+func assertPartialValidationDisclosure(t *testing.T, scope string, capabilities *validationCapabilitiesOutput, modeDescription string) {
+	t.Helper()
+
+	if scope != "partial" {
+		t.Fatalf("validation_scope = %q, want partial", scope)
+	}
+	if capabilities == nil {
+		t.Fatal("validation_capabilities = nil, want partial capability map")
+	}
+	if !capabilities.MethodPath {
+		t.Fatal("validation_capabilities.method_path = false, want true")
+	}
+	if !capabilities.ResponseStatus {
+		t.Fatal("validation_capabilities.response_status = false, want true")
+	}
+	if !capabilities.ResponseContentType {
+		t.Fatal("validation_capabilities.response_content_type = false, want true")
+	}
+	if !capabilities.ResponseBody {
+		t.Fatal("validation_capabilities.response_body = false, want true")
+	}
+	if !capabilities.InlineJSONResponseSchema {
+		t.Fatal("validation_capabilities.inline_json_response_schema = false, want true")
+	}
+	if !capabilities.RefResolution {
+		t.Fatal("validation_capabilities.ref_resolution = false, want true")
+	}
+	if !capabilities.LocalRefResolution {
+		t.Fatal("validation_capabilities.local_ref_resolution = false, want true")
+	}
+	if !capabilities.Arrays {
+		t.Fatal("validation_capabilities.arrays = false, want true")
+	}
+	if !capabilities.Enum {
+		t.Fatal("validation_capabilities.enum = false, want true")
+	}
+	if !capabilities.Nullable {
+		t.Fatal("validation_capabilities.nullable = false, want true")
+	}
+	if !capabilities.AdditionalProperties {
+		t.Fatal("validation_capabilities.additional_properties = false, want true")
+	}
+	for name, value := range map[string]bool{
+		"request_body":                 capabilities.RequestBody,
+		"request_query":                capabilities.RequestQuery,
+		"request_headers":              capabilities.RequestHeaders,
+		"path_parameter_schema":        capabilities.PathParameterSchema,
+		"remote_ref_resolution":        capabilities.RemoteRefResolution,
+		"allOf":                        capabilities.AllOf,
+		"oneOf":                        capabilities.OneOf,
+		"anyOf":                        capabilities.AnyOf,
+		"additional_properties_schema": capabilities.AdditionalPropertiesSchema,
+		"openapi_3_1":                  capabilities.OpenAPI31,
+		"yaml":                         capabilities.YAML,
+		"remote_fetch":                 capabilities.RemoteFetch,
+	} {
+		if value {
+			t.Fatalf("validation_capabilities.%s = true, want false", name)
+		}
+	}
+	if !strings.Contains(modeDescription, "strict means strict enforcement of the validation capabilities currently supported by Echo MCP") {
+		t.Fatalf("validation_mode_description missing strict subset wording: %q", modeDescription)
+	}
+	if !strings.Contains(modeDescription, "not full OpenAPI validation") {
+		t.Fatalf("validation_mode_description missing full-validation caveat: %q", modeDescription)
+	}
+}
+
+func writeUnsupportedFeatureOpenAPI(t *testing.T, root string) string {
+	t.Helper()
+
+	sourcePath := filepath.Join(root, "unsupported-feature-openapi.json")
+	document := `{
+  "openapi": "3.0.3",
+  "paths": {
+    "/v1/payment_intents": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "PaymentIntent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/payment_intent"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "payment_intent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "object": {"type": "string"},
+              "status": {"type": "string"},
+              "charges": {
+                "type": "array",
+                "items": {"type": "object"}
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}`
+	if err := os.WriteFile(sourcePath, []byte(document), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	return sourcePath
+}
+
+func loadStrictContract(t *testing.T, ctx context.Context, clientSession *mcp.ClientSession, sourcePath string) string {
+	t.Helper()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "load_openapi_contract",
+		Arguments: map[string]any{
+			"path":            sourcePath,
+			"contract_id":     "stripe",
+			"validation_mode": "strict",
+		},
+	})
+	if err != nil {
+		t.Fatalf("load_openapi_contract CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, result)
+	return sourcePath
+}
+
+func configureValidPaymentIntentBehavior(t *testing.T, ctx context.Context, clientSession *mcp.ClientSession) {
+	t.Helper()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "configure_behavior",
+		Arguments: map[string]any{
+			"behavior_id": "stripe-like-paymentintent-card-declined",
+			"match": map[string]any{
+				"method": http.MethodPost,
+				"path":   "/v1/payment_intents/pi_123/confirm",
+			},
+			"outcome": map[string]any{
+				"type":         "http_response",
+				"status_code":  http.StatusPaymentRequired,
+				"content_type": "application/json",
+				"body":         paymentIntentDeclinedBody,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("configure_behavior CallTool() error = %v", err)
+	}
+	assertToolSuccess(t, result)
 }
 
 func decodeStructuredContent[T any](t *testing.T, result *mcp.CallToolResult) T {
@@ -795,6 +1693,18 @@ func assertStringSliceContains(t *testing.T, structured map[string]any, key stri
 		}
 	}
 	t.Fatalf("%s = %+v, want value %q", key, values, want)
+}
+
+func assertStringSliceContainsSubstring(t *testing.T, structured map[string]any, key string, want string) {
+	t.Helper()
+
+	values := stringSliceField(t, structured, key)
+	for _, value := range values {
+		if strings.Contains(value, want) {
+			return
+		}
+	}
+	t.Fatalf("%s = %+v, want substring %q", key, values, want)
 }
 
 func assertStringSliceNotContains(t *testing.T, structured map[string]any, key string, unwanted string) {

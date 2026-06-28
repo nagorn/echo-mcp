@@ -1,0 +1,36 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Local Ref Response Corpus Fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/widgets/{id}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Widget",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Widget"}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Widget": {
+        "type": "object",
+        "required": ["id", "kind", "status"],
+        "properties": {
+          "id": {"type": "string"},
+          "kind": {"type": "string", "enum": ["widget"]},
+          "status": {"type": "string", "enum": ["active", "inactive"]}
+        }
+      }
+    }
+  }
+}

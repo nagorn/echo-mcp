@@ -1,0 +1,48 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Unsupported Composition Corpus Fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/widgets/{id}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Widget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {"$ref": "#/components/schemas/Widget"},
+                    {"$ref": "#/components/schemas/ArchivedWidget"}
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ArchivedWidget": {
+        "type": "object",
+        "required": ["id", "archived"],
+        "properties": {
+          "id": {"type": "string"},
+          "archived": {"type": "boolean"}
+        }
+      },
+      "Widget": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string"}
+        }
+      }
+    }
+  }
+}

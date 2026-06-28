@@ -1,0 +1,29 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Nullable Corpus Fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/widgets/{id}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Widget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {"type": "string"},
+                    "nickname": {"type": "string", "nullable": true}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

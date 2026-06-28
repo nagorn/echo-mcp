@@ -1,0 +1,30 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Inline Response Corpus Fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/widgets/{id}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Widget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["id", "name"],
+                  "properties": {
+                    "id": {"type": "string"},
+                    "name": {"type": "string"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

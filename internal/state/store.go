@@ -71,6 +71,14 @@ func (s *Store) ConfigureResponseRule(rule ResponseRule) {
 	s.responseRule = &rule
 }
 
+// HasResponseRule reports whether a behavior rule is currently configured.
+func (s *Store) HasResponseRule() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.responseRule != nil
+}
+
 // MatchResponseRule returns the configured response rule when method and path match.
 func (s *Store) MatchResponseRule(method string, path string) (ResponseRule, bool) {
 	s.mu.RLock()

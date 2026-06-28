@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"echo-mcp/internal/contract"
 	"echo-mcp/internal/control"
 	"echo-mcp/internal/httpserver"
 	"echo-mcp/internal/state"
@@ -21,12 +20,19 @@ import (
 const (
 	defaultHTTPAddr = ":8080"
 	envHTTPAddr     = "ECHO_MCP_HTTP_ADDR"
+	envOpenAPIFile  = "ECHO_MCP_OPENAPI_FILE"
+	envContractRoot = "ECHO_MCP_CONTRACT_ROOT"
 )
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	store := state.New()
-	controlPlane := control.NewWithWebhookSender(store, loadContractValidator(logger), loadWebhookSender(logger))
+	contractManager, err := loadContractManagerFromEnvironment(os.Getenv, logger)
+	if err != nil {
+		logger.Error("load OpenAPI contract", "error", err)
+		os.Exit(1)
+	}
+	controlPlane := control.NewWithContractManager(store, contractManager, loadWebhookSender(logger))
 	dataPlaneServer := httpserver.New(store, logger)
 	controlPlaneServer := control.NewMCPServer(controlPlane)
 	httpAddr := httpAddrFromEnvironment(os.Getenv)
@@ -64,20 +70,28 @@ func httpAddrFromEnvironment(getenv func(string) string) string {
 	return defaultHTTPAddr
 }
 
-func loadContractValidator(logger *slog.Logger) control.ResponseRuleValidator {
-	path := os.Getenv("ECHO_MCP_OPENAPI_FILE")
-	if path == "" {
-		return nil
-	}
-
-	validator, err := contract.LoadOpenAPIFile(path)
+func loadContractManagerFromEnvironment(getenv func(string) string, logger *slog.Logger) (*control.ContractManager, error) {
+	manager, err := control.NewContractManagerWithContractRoot(getenv(envContractRoot), envContractRoot)
 	if err != nil {
-		logger.Error("load OpenAPI contract", "path", path, "error", err)
-		os.Exit(1)
+		return nil, err
+	}
+	path := getenv(envOpenAPIFile)
+	if path == "" {
+		return manager, nil
 	}
 
-	logger.Info("loaded OpenAPI contract", "path", path)
-	return validator
+	result, err := manager.LoadOpenAPIContract(control.LoadOpenAPIContractCommand{
+		Path:           path,
+		ValidationMode: control.ValidationModeStrict,
+	}, false)
+	if err != nil {
+		return nil, err
+	}
+
+	if logger != nil {
+		logger.Info("loaded OpenAPI contract", "path", result.SourcePath)
+	}
+	return manager, nil
 }
 
 func loadWebhookSender(logger *slog.Logger) control.WebhookSender {

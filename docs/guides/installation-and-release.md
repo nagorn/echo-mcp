@@ -31,7 +31,7 @@ GitHub Releases binary -> verify checksum -> extract -> register as MCP stdio se
 Release page:
 
 ```text
-https://github.com/nagorn/echo-mcp/releases/tag/v0.2.0
+https://github.com/nagorn/echo-mcp/releases/tag/v0.3.0
 ```
 
 Asset mapping:
@@ -49,9 +49,9 @@ Example for macOS Apple Silicon:
 ```bash
 mkdir -p .codex/bin
 curl -L -o /tmp/echo-mcp_darwin_arm64.tar.gz \
-  https://github.com/nagorn/echo-mcp/releases/download/v0.2.0/echo-mcp_darwin_arm64.tar.gz
+  https://github.com/nagorn/echo-mcp/releases/download/v0.3.0/echo-mcp_darwin_arm64.tar.gz
 curl -L -o /tmp/echo-mcp-checksums.txt \
-  https://github.com/nagorn/echo-mcp/releases/download/v0.2.0/checksums.txt
+  https://github.com/nagorn/echo-mcp/releases/download/v0.3.0/checksums.txt
 (cd /tmp && grep 'echo-mcp_darwin_arm64.tar.gz' echo-mcp-checksums.txt | shasum -a 256 -c -)
 tar -xzf /tmp/echo-mcp_darwin_arm64.tar.gz -C .codex/bin
 chmod +x .codex/bin/echo-mcp
@@ -95,6 +95,7 @@ command: /absolute/path/to/project/.codex/bin/echo-mcp
 args: []
 env:
   ECHO_MCP_HTTP_ADDR=127.0.0.1:18080
+  ECHO_MCP_CONTRACT_ROOT=/absolute/path/to/project/contracts
 ```
 
 Client-specific formats differ. Echo MCP does not require a particular MCP host;
@@ -122,22 +123,48 @@ ECHO_MCP_HTTP_ADDR=127.0.0.1:18080 ./bin/echo-mcp
 
 Bind to localhost where possible. Do not expose Echo MCP to untrusted networks.
 
+### OpenAPI Contract Root
+
+`ECHO_MCP_CONTRACT_ROOT` bounds local contract loading. If unset, Echo MCP uses
+the process working directory as the contract root.
+
+Relative paths resolve against the contract root. Absolute paths are accepted
+only if they resolve inside the contract root. Paths outside the root, traversal
+escapes, and symlink escapes where detected are rejected.
+
+Runtime loading and startup loading share this boundary.
+
 ### OpenAPI Contract Constraint
 
-Optional contract validation can be enabled with one developer-provided OpenAPI
-3.0.x JSON file:
+Preferred runtime workflow:
+
+1. Start Echo MCP.
+2. Call `load_openapi_contract` with a local OpenAPI 3.0 JSON contract under the
+   contract root.
+3. Call `get_contract_status`.
+4. Configure behavior through `configure_behavior`.
+5. Run app tests against the REST data plane.
+6. Use `reset` between scenarios; the contract remains active.
+7. Use `unload_openapi_contract` when switching contract contexts.
+
+Startup loading remains supported:
 
 ```bash
-ECHO_MCP_OPENAPI_FILE=./contracts/payment.openapi.json ./bin/echo-mcp
+ECHO_MCP_CONTRACT_ROOT=./contracts \
+ECHO_MCP_OPENAPI_FILE=payment.openapi.json \
+./bin/echo-mcp
 ```
 
-The file should live with the application test fixtures or another
-developer-controlled contract directory. Echo MCP does not fetch, import,
-generate, repair, or complete OpenAPI specifications. The contract is a
-validation constraint only.
+The contract is a validation constraint only. Echo MCP does not fetch, import,
+generate, repair, or complete OpenAPI specifications.
 
-OpenAPI 3.1.x, YAML, and external `$ref` resolution are not part of the current
-MVP.
+Validation is partial response validation for supported OpenAPI 3.0 JSON
+features. Strict mode means strict enforcement of supported validation
+capabilities only; it is not full OpenAPI validation.
+
+Not included in v0.3.0: OpenAPI 3.1, YAML, remote/file refs,
+`allOf`/`oneOf`/`anyOf`, request body validation, query/header/path parameter
+validation, automatic scenario generation, and provider-specific simulators.
 
 ### Webhook Endpoint
 
@@ -165,23 +192,9 @@ Echo MCP process per dependency. Give each process its own:
 
 - `ECHO_MCP_HTTP_ADDR`
 - MCP server registration in the project's MCP host
-- optional `ECHO_MCP_OPENAPI_FILE`
+- optional `ECHO_MCP_CONTRACT_ROOT`
+- optional startup `ECHO_MCP_OPENAPI_FILE`
 - optional webhook endpoint configuration
-
-Example:
-
-```bash
-ECHO_MCP_HTTP_ADDR=127.0.0.1:18080 \
-ECHO_MCP_OPENAPI_FILE=./contracts/payment.openapi.json \
-./bin/echo-mcp
-
-ECHO_MCP_HTTP_ADDR=127.0.0.1:18081 \
-ECHO_MCP_OPENAPI_FILE=./contracts/fraud.openapi.json \
-./bin/echo-mcp
-```
-
-Multi-dependency support inside one Echo MCP process is future work and would
-require a future ADR.
 
 ## Smoke Test
 
@@ -194,32 +207,10 @@ After registering Echo MCP with an MCP host:
    HTTP outcome.
 5. Call `reset`.
 
-Example behavior:
-
-```json
-{
-  "behavior_id": "hello-ok",
-  "match": {
-    "method": "GET",
-    "path": "/hello"
-  },
-  "outcome": {
-    "type": "http_response",
-    "status_code": 200,
-    "content_type": "application/json",
-    "body": "{\"message\":\"hello from Echo MCP\"}"
-  }
-}
-```
-
-Example diagnostic request:
-
-```bash
-curl -i http://127.0.0.1:18080/hello
-```
-
-In real end-to-end tests, the Application Under Test should make the request
-through its normal external dependency configuration.
+For contract-backed smoke tests, also call `load_openapi_contract`, confirm
+`get_contract_status`, configure one valid strict response, configure one
+invalid strict response and confirm MCP rejection, then verify
+`validation.mode = "off"` with a reason accepts intentional fault behavior.
 
 ## Security Note
 
@@ -228,10 +219,9 @@ controlled CI/test environments only.
 
 Do not expose Echo MCP directly to the public internet. The MVP intentionally
 does not include authentication or authorization. The MCP control plane can
-configure simulator behavior, and webhook-style event delivery can send
-outbound HTTP requests to configured application webhook endpoints. If exposed
-incorrectly, Echo MCP could be abused as an outbound request relay or DDoS
-helper.
+configure simulator behavior, load local contracts under the contract root, and
+webhook-style event delivery can send outbound HTTP requests to configured
+application webhook endpoints. If exposed incorrectly, Echo MCP could be abused.
 
 Bind or expose Echo MCP to localhost by default where possible. If running
 outside a local machine, use firewalling, container/network isolation, or
@@ -244,7 +234,7 @@ application/test environment.
 Current public release target:
 
 ```text
-v0.2.0
+v0.3.0
 ```
 
 Use semantic versioning after the first public release. Before `v1.0.0`, minor
@@ -266,8 +256,8 @@ echo-mcp_windows_amd64.zip
 checksums.txt
 ```
 
-Supported operating systems and CPU architectures for the current
-binary release matrix:
+Supported operating systems and CPU architectures for the current binary
+release matrix:
 
 - macOS arm64
 - macOS amd64
@@ -286,36 +276,5 @@ Generate SHA-256 checksums for release artifacts:
 shasum -a 256 echo-mcp_* > checksums.txt
 ```
 
-If GoReleaser is adopted, let GoReleaser generate the checksum file and include
-it in the GitHub release.
-
-## GoReleaser Recommendation
-
-GoReleaser is recommended for repeatable multi-platform release builds, archives,
-and checksums. It is not required for local development and should not be added
-until release automation is explicitly approved.
-
-## Release Checks
-
-Before publishing a release, verify:
-
-- documentation describes only implemented capabilities
-- ADRs match the release surface
-- excluded features remain documented as limitations or non-goals
-- `go test ./...` passes
-- `go test -race ./...` passes
-- `go vet ./...` passes
-- `go build -o bin/echo-mcp ./cmd/echo-mcp` passes
-- `make test` passes
-- `make build` passes
-- `git diff --check` passes
-- no generated release artifact is published without separate approval
-
-Docker image builds can be checked with:
-
-```bash
-make docker-build
-```
-
-If Docker is unavailable locally, record that as an environment limitation
-rather than treating it as an implementation failure.
+Final release assets should be rebuilt after the release commit and tag, before
+uploading them to GitHub Releases.

@@ -1,0 +1,33 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Cyclic Ref Corpus Fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/nodes/{id}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Node",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Node"}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Node": {
+        "type": "object",
+        "properties": {
+          "child": {"$ref": "#/components/schemas/Node"}
+        }
+      }
+    }
+  }
+}

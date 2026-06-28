@@ -19,6 +19,8 @@ Good fits include:
 - testing application retry behavior
 - testing application error handling
 - verifying which dependency interaction occurred during a test
+- validating configured responses against a local OpenAPI 3.0 JSON contract for
+  supported response features
 
 Echo MCP is useful when the real dependency is unavailable, expensive,
 rate-limited, difficult to put into the desired state, or risky to call during a
@@ -33,7 +35,9 @@ Echo MCP is not:
 - a source of truth for another service's business rules
 - a general-purpose contract testing platform
 - a source of built-in public API contracts
-- an OpenAPI importer or generator
+- a full OpenAPI-first runtime
+- an OpenAPI importer, generator, or remote fetcher
+- a provider-specific Stripe simulator
 - a traffic recorder or replay server
 - a monitoring, metrics, or audit logging system
 - a UI, dashboard, admin API, or CLI product surface
@@ -53,6 +57,7 @@ Echo MCP should not be used to hide test-only branches inside application code.
 5. Run the application test.
 6. Use an AI agent, or another MCP client, to inspect observations through MCP.
 7. Assert the application outcome and the dependency interaction that occurred.
+8. Call `reset` before the next scenario.
 
 The control plane and data plane remain separate throughout the workflow:
 
@@ -63,6 +68,63 @@ The control plane and data plane remain separate throughout the workflow:
   webhook endpoints.
 - The AI agent retrieves observation information through MCP.
 
+## Runtime Contract-Backed Workflow
+
+When provider fidelity matters and a local OpenAPI 3.0 JSON contract is
+available:
+
+1. Set `ECHO_MCP_CONTRACT_ROOT` to the directory that contains allowed contract
+   files, or rely on the default process working directory root.
+2. Start Echo MCP.
+3. Call `load_openapi_contract` with a local path under the contract root.
+4. Call `get_contract_status`.
+5. Inspect `validation_scope`, `validation_capabilities`,
+   `validation_mode_description`, `operations_count`, and `schemas_count`.
+6. Call `configure_behavior` with a concrete response.
+7. Run the application test against the REST data plane.
+8. Call `get_observations`.
+9. Call `reset` between scenarios; reset clears behavior and observations but
+   keeps the active contract loaded.
+10. Call `unload_openapi_contract` only when switching contract contexts.
+
+`schemas_count` is the number of component schemas discovered in the loaded
+OpenAPI document. It is not the number of schemas fully supported by Echo MCP's
+validator.
+
+Strict mode means strict enforcement of supported validation capabilities only.
+It is not full OpenAPI validation.
+
+## Intentional Fault Testing
+
+Echo MCP still supports intentional negative tests such as malformed JSON,
+truncated bodies, schema violations, unexpected enums, or invalid content types.
+
+When a contract is active, intentional invalidity must be explicit:
+
+```json
+{
+  "validation": {
+    "mode": "off",
+    "reason": "intentional malformed response test"
+  }
+}
+```
+
+Echo MCP accepts the behavior with a control-plane warning. The warning is not
+inserted into REST data-plane response bodies or headers.
+
+## Contract Root Boundary
+
+`ECHO_MCP_CONTRACT_ROOT` limits contract loading to a developer-controlled
+filesystem tree.
+
+- If unset, the process working directory is the root.
+- Relative paths resolve against the root.
+- Absolute paths are allowed only when they resolve inside the root.
+- Paths outside the root, traversal escapes, and symlink escapes where detected
+  are rejected.
+- Startup loading with `ECHO_MCP_OPENAPI_FILE` uses the same boundary.
+
 ## Multiple External Dependencies
 
 MVP usage: one Echo MCP process represents one simulated external dependency.
@@ -71,23 +133,23 @@ The current implementation supports one OpenAPI contract, one registered
 webhook endpoint, and one active REST behavior rule per process. If the
 Application Under Test integrates with several external dependencies at the same
 time, run one Echo MCP process per dependency and give each process its own
-`ECHO_MCP_HTTP_ADDR` and MCP server registration.
+`ECHO_MCP_HTTP_ADDR`, optional `ECHO_MCP_CONTRACT_ROOT`, and MCP server
+registration.
 
 Example:
 
 ```bash
 ECHO_MCP_HTTP_ADDR=127.0.0.1:18080 \
-ECHO_MCP_OPENAPI_FILE=./contracts/payment.openapi.json \
+ECHO_MCP_CONTRACT_ROOT=./contracts/payment \
 ./bin/echo-mcp
 
 ECHO_MCP_HTTP_ADDR=127.0.0.1:18081 \
-ECHO_MCP_OPENAPI_FILE=./contracts/fraud.openapi.json \
+ECHO_MCP_CONTRACT_ROOT=./contracts/fraud \
 ./bin/echo-mcp
 ```
 
 Point each application dependency base URL at the matching Echo MCP data-plane
-address. Multi-dependency support inside one Echo MCP process is future work
-and would require a future ADR.
+address. Multi-dependency support inside one Echo MCP process is future work.
 
 ## Boundary Rule
 
@@ -123,13 +185,6 @@ is not a simulated external provider response. Provider-like responses such as
 HTTP `404`, `500`, or `503` should be returned only when an MCP client
 explicitly configures them as the behavior outcome.
 
-When a test receives HTTP `501`, use an AI agent, or another MCP client, to
-inspect available observations and configure the missing behavior through the
-MCP control plane before rerunning the test.
-
-Observation information for unmatched REST requests may be improved later; that
-is not required for the current MVP policy.
-
 ## Example Use Cases
 
 ### Payment Declined
@@ -150,14 +205,8 @@ sequences remain future work.
 ### Malformed Upstream Response
 
 The AI agent configures Echo MCP to return an HTTP success or failure response
-with a malformed or unexpected body. The application test verifies that parsing
-errors are handled without corrupting state.
-
-### Duplicate Transaction Response
-
-The AI agent configures a dependency to return a duplicate-transaction-style
-response. The application test verifies idempotency handling and confirms that
-the application does not create duplicate local records.
+with a malformed or unexpected body. If a contract is active, use
+`validation.mode = "off"` with a reason to make the intentional fault explicit.
 
 ### Webhook-Style Event Delivery
 
@@ -175,10 +224,6 @@ Echo MCP sends one immediate HTTP `POST` with `Content-Type: application/json`
 to the configured application webhook endpoint. The application receives the
 request through its normal webhook handler.
 
-The AI agent then calls `get_observations` and verifies the
-`webhook_deliveries` entry. AI agents select configured endpoint names; they do
-not provide arbitrary outbound URLs.
-
 ## Current MVP Limitations
 
 The current MVP is intentionally narrow:
@@ -188,8 +233,9 @@ The current MVP is intentionally narrow:
 - one simulated external dependency per Echo MCP process
 - configurable REST data-plane listen address with `ECHO_MCP_HTTP_ADDR`
 - unmatched REST data-plane requests return HTTP `501 Not Implemented`
-- optional validation against one developer-provided OpenAPI 3.0.x JSON
+- partial response validation against one developer-provided OpenAPI 3.0 JSON
   contract
+- runtime contract loading through MCP for local files under the contract root
 - immediate single-attempt webhook-style event delivery to one configured
   application webhook endpoint
 - no UI
@@ -201,8 +247,14 @@ The current MVP is intentionally narrow:
 - no admin API
 - no metrics
 - no audit logs
-- no OpenAPI import or generation
-- no OpenAPI 3.1.x, YAML OpenAPI, or external `$ref` support
+- no `echo-mcp.yaml`
+- no full OpenAPI-first runtime
+- no OpenAPI 3.1 or YAML
+- no remote/file refs
+- no `allOf`, `oneOf`, or `anyOf` semantics
+- no request body, query, header, or path parameter validation
+- no automatic scenario generation
+- no provider-specific simulators
 - no built-in public API contracts
 - no recording or replay
 - no timeout outcome

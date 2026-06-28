@@ -2,6 +2,43 @@
 
 All notable changes to Echo MCP are documented in this file.
 
+## [0.3.0] - 2026-06-28
+
+### Added
+
+- Runtime OpenAPI contract loading through MCP control-plane tools.
+- `load_openapi_contract`, `get_contract_status`, and `unload_openapi_contract`.
+- Partial contract-backed response validation for supported OpenAPI 3.0 JSON features.
+- Local internal `$ref` resolution for response schemas.
+- Contract root boundary via `ECHO_MCP_CONTRACT_ROOT`.
+- Safe contract source path display relative to the contract root.
+- Validation capability disclosure through `validation_scope`, `validation_capabilities`, and `validation_mode_description`.
+- Reproducible OpenAPI compatibility smoke script.
+
+### Changed
+
+- `configure_behavior` validates configured responses against the active contract when one is loaded.
+- `reset` keeps the active OpenAPI contract loaded while clearing behavior and observations.
+- Startup OpenAPI loading uses the same contract manager and contract-root boundary as runtime loading.
+
+### Compatibility
+
+- Existing manual mock behavior remains supported when no contract is active.
+- REST data-plane responses are not modified by contract guidance or validation warnings.
+- Validation is partial and limited to supported OpenAPI 3.0 JSON response features.
+- Strict mode means strict enforcement of supported validation capabilities only.
+
+### Not Included
+
+- No `echo-mcp.yaml`.
+- No full OpenAPI-first runtime.
+- No OpenAPI 3.1 or YAML support.
+- No remote/file refs.
+- No `allOf`, `oneOf`, or `anyOf` semantics.
+- No request body/query/header/path parameter validation.
+- No automatic scenario generation.
+- No provider-specific Stripe simulator.
+
 ## [0.2.0] - 2026-06-27
 
 ### Added

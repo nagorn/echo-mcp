@@ -3,7 +3,9 @@ package control
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"echo-mcp/internal/contract"
 	"echo-mcp/internal/state"
 	"echo-mcp/internal/webhook"
 )
@@ -12,6 +14,10 @@ import (
 type Plane interface {
 	Protocol() string
 	ConfigureResponseRule(state.ResponseRule) error
+	ConfigureResponseRuleWithValidation(state.ResponseRule, BehaviorValidationOverride) ([]string, error)
+	LoadOpenAPIContract(LoadOpenAPIContractCommand) (LoadOpenAPIContractResult, error)
+	ContractStatus() ContractStatus
+	UnloadOpenAPIContract(UnloadOpenAPIContractCommand) (UnloadOpenAPIContractResult, error)
 	SendWebhookEvent(context.Context, webhook.Event) (state.WebhookDeliveryObservation, error)
 	Reset() error
 	Observations() []state.Observation
@@ -30,9 +36,10 @@ type WebhookSender interface {
 
 // LocalPlane is the in-process MCP control-plane integration for the MVP.
 type LocalPlane struct {
-	store         *state.Store
-	validator     ResponseRuleValidator
-	webhookSender WebhookSender
+	store           *state.Store
+	validator       ResponseRuleValidator
+	contractManager *ContractManager
+	webhookSender   WebhookSender
 }
 
 // New creates an in-process control-plane boundary backed by in-memory state.
@@ -47,14 +54,38 @@ func NewWithValidator(store *state.Store, validator ResponseRuleValidator) *Loca
 
 // NewWithWebhookSender creates a control-plane boundary with optional webhook delivery.
 func NewWithWebhookSender(store *state.Store, validator ResponseRuleValidator, webhookSender WebhookSender) *LocalPlane {
+	manager := NewContractManager()
+	var legacyValidator ResponseRuleValidator
+	if openAPIContract, ok := validator.(*contract.OpenAPIContract); ok {
+		var err error
+		manager, err = NewContractManagerWithContract("", openAPIContract, ValidationModeStrict, time.Now().UTC())
+		if err != nil {
+			legacyValidator = validator
+		}
+	} else {
+		legacyValidator = validator
+	}
+	return NewWithContractManagerAndValidator(store, manager, legacyValidator, webhookSender)
+}
+
+// NewWithContractManager creates a control-plane boundary with active contract state.
+func NewWithContractManager(store *state.Store, manager *ContractManager, webhookSender WebhookSender) *LocalPlane {
+	return NewWithContractManagerAndValidator(store, manager, nil, webhookSender)
+}
+
+func NewWithContractManagerAndValidator(store *state.Store, manager *ContractManager, validator ResponseRuleValidator, webhookSender WebhookSender) *LocalPlane {
 	if store == nil {
 		store = state.New()
 	}
+	if manager == nil {
+		manager = NewContractManager()
+	}
 
 	return &LocalPlane{
-		store:         store,
-		validator:     validator,
-		webhookSender: webhookSender,
+		store:           store,
+		validator:       validator,
+		contractManager: manager,
+		webhookSender:   webhookSender,
 	}
 }
 
@@ -65,19 +96,45 @@ func (*LocalPlane) Protocol() string {
 
 // ConfigureResponseRule stores one HTTP response behavior rule in memory.
 func (p *LocalPlane) ConfigureResponseRule(rule state.ResponseRule) error {
+	_, err := p.ConfigureResponseRuleWithValidation(rule, BehaviorValidationOverride{})
+	return err
+}
+
+// ConfigureResponseRuleWithValidation stores one HTTP response behavior rule after validation.
+func (p *LocalPlane) ConfigureResponseRuleWithValidation(rule state.ResponseRule, override BehaviorValidationOverride) ([]string, error) {
+	warnings, err := p.contractManager.ValidateResponseRule(rule, override)
+	if err != nil {
+		return nil, err
+	}
 	if p.validator != nil {
 		if err := p.validator.ValidateResponseRule(rule); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	p.store.ConfigureResponseRule(rule)
-	return nil
+	return warnings, nil
 }
 
 // ContractValidationActive reports whether response rules are validated before storage.
 func (p *LocalPlane) ContractValidationActive() bool {
-	return p.validator != nil
+	status := p.ContractStatus()
+	return p.validator != nil || (status.Active && status.ValidationMode != ValidationModeOff)
+}
+
+// LoadOpenAPIContract loads a local OpenAPI contract into active state.
+func (p *LocalPlane) LoadOpenAPIContract(command LoadOpenAPIContractCommand) (LoadOpenAPIContractResult, error) {
+	return p.contractManager.LoadOpenAPIContract(command, p.store.HasResponseRule())
+}
+
+// ContractStatus reports active OpenAPI contract state.
+func (p *LocalPlane) ContractStatus() ContractStatus {
+	return p.contractManager.Status()
+}
+
+// UnloadOpenAPIContract clears active OpenAPI contract state.
+func (p *LocalPlane) UnloadOpenAPIContract(command UnloadOpenAPIContractCommand) (UnloadOpenAPIContractResult, error) {
+	return p.contractManager.UnloadOpenAPIContract(command, p.store.HasResponseRule())
 }
 
 // SendWebhookEvent sends one webhook-style event and records the delivery attempt.

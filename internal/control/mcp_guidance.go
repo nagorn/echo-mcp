@@ -9,27 +9,64 @@ import (
 const serverInstructions = `Echo MCP is a controllable API simulation server.
 MCP is the control plane for configuring behavior and reading observations; REST data plane and webhook HTTP calls are used by the application under test.
 Manual mock behavior is useful for quick exploration, but manual mocks are not contract-validated.
-If provider contract fidelity matters, prefer OpenAPI-backed validation or hybrid validation when available.
+If provider contract fidelity matters, use the runtime contract-backed workflow when available and inspect validation_capabilities.
+Validation mode strict means strict enforcement of the validation capabilities currently supported by Echo MCP. It is not full OpenAPI validation.
 Recommended first steps:
 1. inspect available tools
 2. inspect guidance prompts/resources if available
 3. choose manual_mock, hybrid_validation, or contract_first based on project needs
-4. document when behavior is manual and not contract-validated`
+4. obtain or locate the local OpenAPI contract when contract fidelity matters
+5. call load_openapi_contract
+6. call get_contract_status
+7. call configure_behavior
+8. run the application test through the REST data plane
+9. use reset between scenarios without unloading the active contract
+10. use unload_openapi_contract only when switching contract contexts
 
-const configureBehaviorDescription = `Configure one REST data-plane response rule as manual mock behavior.
+Echo MCP performs partial response validation for supported OpenAPI 3.0 JSON capabilities; it does not generate behavior from OpenAPI and is not fully OpenAPI-first by itself.`
 
-What it does: stores one method/path/status/body rule used by the REST data plane.
-When to use: use for quick simulation, exploration, or a documented manual_mock workflow.
+const configureBehaviorDescription = `Configure one REST data-plane response rule.
+
+What it does: stores one method/path/status/body rule used by the REST data plane, either as manual mock behavior or partially contract-validated behavior.
+When to use: use for quick manual mock simulation, exploration, or after load_openapi_contract in a contract-backed workflow.
 When not to use: do not use this alone to prove provider contract fidelity or to send webhook events.
-Contract note: manual mock behavior does not prove provider contract fidelity by itself; if contract fidelity matters, look for OpenAPI-backed validation or ask the developer whether a contract is available.
+Contract note: manual mock is still allowed. If contract fidelity matters, call load_openapi_contract first. If a contract is active, configured behavior is validated unless explicitly skipped, using partial response validation for supported OpenAPI 3.0 JSON capabilities. Skipping validation requires a reason.
+Validation mode strict means strict enforcement of the validation capabilities currently supported by Echo MCP. It is not full OpenAPI validation.
 Common next steps: run the application test normally, then call get_observations for data-plane evidence.`
+
+const loadOpenAPIContractDescription = `Load one local OpenAPI contract into Echo MCP runtime state.
+
+What it does: reads a local file only in MVP, activates one generic OpenAPI contract, and enables partial contract-backed validation for configured REST response behavior.
+When to use: use after starting Echo MCP and before configure_behavior when provider contract fidelity matters.
+When not to use: does not fetch remote URLs, does not upload or mutate contract files, does not add provider-specific logic, and does not make Echo MCP fully OpenAPI-first by itself.
+Contract note: generic OpenAPI, not Stripe-specific. Loading validates configured response behavior only for supported capabilities; Echo MCP does not generate mock behavior from the contract.
+Path note: paths must resolve under the configured contract root. Set ECHO_MCP_CONTRACT_ROOT to choose the root; when unset, Echo MCP uses the process working directory.
+Validation mode strict means strict enforcement of the validation capabilities currently supported by Echo MCP. It is not full OpenAPI validation.
+Common next steps: call get_contract_status, then call configure_behavior with contract-valid responses.`
+
+const getContractStatusDescription = `Read-only inspection of the active OpenAPI contract.
+
+What it does: reports whether an active OpenAPI contract is loaded, including contract id, source display path, OpenAPI version, operation count, component schema count, loaded timestamp, and validation mode.
+When to use: use after startup loading or load_openapi_contract to confirm contract-backed validation state.
+When not to use: do not use this to load, unload, or mutate contracts.
+Contract note: this is read-only and idempotent.
+Validation mode strict means strict enforcement of the validation capabilities currently supported by Echo MCP. It is not full OpenAPI validation.
+Common next steps: call configure_behavior when active, or load_openapi_contract when inactive.`
+
+const unloadOpenAPIContractDescription = `Unload the active OpenAPI contract from Echo MCP runtime state.
+
+What it does: clears active contract state only; it does not delete files and does not mutate source documents.
+When to use: use only when switching contract contexts or returning to manual mock mode.
+When not to use: do not unload while configured behavior should remain associated with the active contract.
+Contract note: unload enforces a safe-state check. If behavior is active, reset first or pass force: true.
+Common next steps: call configure_behavior for manual mock mode or load another contract.`
 
 const resetDescription = `Clear Echo MCP control-plane state.
 
 What it does: clears configured behavior, REST observations, and webhook delivery observations.
 When to use: use before the next scenario or after a test to return Echo MCP to an empty in-memory state.
 When not to use: do not use while another scenario still needs the current observations as evidence.
-Contract note: reset is state cleanup; it is not contract-related behavior.
+Contract note: reset keeps the active OpenAPI contract loaded so scenario runners can reuse contract-backed validation across scenarios.
 Common next steps: configure the next manual mock behavior or webhook scenario.`
 
 const sendWebhookEventDescription = `Send one webhook-style event to a configured application webhook endpoint.
@@ -73,10 +110,13 @@ var guidancePrompts = []promptDefinition{
 
 1. Inspect tools, prompts, and resources before configuring behavior.
 2. Decide whether this task needs manual_mock, hybrid_validation, or contract_first.
-3. Use configure_behavior only for REST manual mock behavior.
-4. Run the application test through the REST data plane.
-5. Use get_observations as evidence and reset between scenarios.
+3. If contract fidelity matters, locate the local OpenAPI contract and call load_openapi_contract.
+4. Call get_contract_status to confirm the active contract.
+5. Use configure_behavior for REST behavior; active contracts perform partial response validation for supported capabilities unless explicitly skipped with a reason.
+6. Run the application test through the REST data plane.
+7. Use get_observations as evidence and reset between scenarios.
 
+Validation mode strict means strict enforcement of the validation capabilities currently supported by Echo MCP. It is not full OpenAPI validation.
 Manual mock behavior is useful for quick exploration, but it is not contract-validated.`,
 	},
 	{
@@ -89,7 +129,8 @@ manual_mock: fastest path for hand-authored method/path/status/body behavior. It
 hybrid_validation: migration path where manual behavior is allowed, but validation/reporting should be used where available.
 contract_first: preferred when an OpenAPI contract exists and provider contract fidelity matters.
 
-If a contract-backed workflow is available, use it. Do not duplicate API schemas in scenario files. Ask the developer whether a contract is available when fidelity matters.`,
+Validation mode strict means strict enforcement of the validation capabilities currently supported by Echo MCP. It is not full OpenAPI validation.
+If a contract-backed workflow is available, use load_openapi_contract, get_contract_status, configure_behavior, reset, and unload_openapi_contract only when switching contract contexts. Do not duplicate API schemas in scenario files. Ask the developer whether a contract is available when fidelity matters.`,
 	},
 	{
 		name:        "echo_mcp_manual_mock_workflow",
@@ -114,7 +155,18 @@ Manual mocks may drift from provider contracts.`,
 Use contract_first when an OpenAPI contract exists and provider contract fidelity matters.
 Use hybrid_validation when migrating from manual mocks toward validation.
 
-Echo MCP may validate configured behavior when OpenAPI-backed validation is active, but it does not generate behavior from OpenAPI by itself in this experiment. Keep behavior deterministic and avoid duplicating API schemas when a contract-backed workflow is available.`,
+Recommended runtime workflow:
+1. Obtain or locate the OpenAPI contract.
+2. Start Echo MCP.
+3. Call load_openapi_contract.
+4. Call get_contract_status.
+5. Call configure_behavior.
+6. Let Echo MCP apply partial response validation for supported OpenAPI 3.0 JSON capabilities.
+7. Use reset between scenarios.
+8. Use unload_openapi_contract only when switching contract contexts.
+
+Validation mode strict means strict enforcement of the validation capabilities currently supported by Echo MCP. It is not full OpenAPI validation.
+Echo MCP may validate configured response behavior for supported capabilities when OpenAPI-backed validation is active, but it does not implement request validation or generate behavior from OpenAPI by itself in this release. Keep behavior deterministic and avoid duplicating API schemas when a contract-backed workflow is available.`,
 	},
 }
 
@@ -136,7 +188,7 @@ var guidanceResources = []resourceDefinition{
 
 Echo MCP is a controllable API simulation server. MCP is the control plane; REST and webhook HTTP calls are the data plane.
 
-First inspect available tools, prompts, and resources. Then choose manual_mock, hybrid_validation, or contract_first based on the project need. Document manual behavior when it is not contract-validated.`,
+First inspect available tools, prompts, and resources. Then choose manual_mock, hybrid_validation, or contract_first based on the project need. For partial contract-backed response validation, call load_openapi_contract, confirm with get_contract_status, configure behavior, run tests, and reset between scenarios. Document manual behavior when it is not contract-validated.`,
 	},
 	{
 		uri:         resourceWorkflows,
@@ -153,7 +205,10 @@ contract_first: preferred when an OpenAPI contract exists and provider contract 
 
 hybrid_validation: migration mode where manual behavior is allowed while validation/reporting is used where available.
 
-Echo MCP does not generate behavior from test intent or OpenAPI in this experiment.`,
+Runtime contract-backed workflow: start Echo MCP, load a local OpenAPI contract, confirm status and validation_capabilities, configure behavior, apply partial response validation for supported capabilities, run app tests, and reset between scenarios.
+
+Validation mode strict means strict enforcement of the validation capabilities currently supported by Echo MCP. It is not full OpenAPI validation.
+Echo MCP does not generate behavior from test intent or OpenAPI in this workflow.`,
 	},
 	{
 		uri:         resourceManualMock,
@@ -164,7 +219,7 @@ Echo MCP does not generate behavior from test intent or OpenAPI in this experime
 
 Use configure_behavior for a hand-authored REST method/path/status/body rule. This is useful for quick simulation and exploration.
 
-Manual mock behavior is not contract-validated. If provider contract fidelity matters, ask whether OpenAPI-backed validation or hybrid validation is available.
+Manual mock behavior is not contract-validated. If provider contract fidelity matters, call load_openapi_contract first and confirm with get_contract_status.
 
 After configuring behavior, run the application test, call get_observations, and reset before the next scenario.`,
 	},
@@ -177,9 +232,13 @@ After configuring behavior, run the application test, call get_observations, and
 
 When an OpenAPI contract exists and fidelity matters, prefer contract_first or hybrid_validation over manual_mock.
 
-Contract-backed validation should be the source of truth for provider methods, paths, schemas, and operation identity where available.
+Contract-backed validation should be used for supported method/path, response status, response content type, and response body capabilities where available. It is partial response validation, not full provider fidelity.
 
-This experiment does not implement a full OpenAPI-first runtime. Echo MCP remains deterministic and does not generate behavior.`,
+Use load_openapi_contract for local files only. Echo MCP does not fetch remote URLs, mutate source contracts, or add provider-specific behavior. Reset keeps the active contract loaded between scenarios.
+Contract paths must resolve under the configured contract root. Set ECHO_MCP_CONTRACT_ROOT to choose the root; when unset, Echo MCP uses the process working directory.
+
+Validation mode strict means strict enforcement of the validation capabilities currently supported by Echo MCP. It is not full OpenAPI validation.
+This release does not implement a full OpenAPI-first runtime. Echo MCP remains deterministic and does not generate behavior.`,
 	},
 }
 

@@ -20,12 +20,17 @@ After installation:
 - REST data plane is reachable.
 - The AI can discover Echo MCP initialize instructions.
 - The AI can discover the available MCP tools:
+  - `load_openapi_contract`
+  - `get_contract_status`
+  - `unload_openapi_contract`
   - `configure_behavior`
   - `reset`
   - `get_observations`
   - `send_webhook_event`
 - The AI can discover guidance prompts and resources.
 - The smoke test succeeds.
+- If a contract is loaded, the AI understands validation is partial and strict
+  means strict for supported capabilities only.
 - The Application Under Test remains unaware of MCP and Echo MCP.
 
 ## Discovery
@@ -45,7 +50,7 @@ Recommended discovery order:
    available.
 
 If Echo MCP is not requested or configured, do not assume it is part of the
-project's test workflow. Echo MCP v0.2.0 does not require or introduce an
+project's test workflow. Echo MCP v0.3.0 does not require or introduce an
 `echo-mcp.yaml` project manifest.
 
 ## Installation Steps
@@ -55,7 +60,7 @@ source or the current platform is unsupported.
 
 ### 1. Detect OS And Architecture
 
-Detect the host OS and CPU architecture, then choose the matching v0.2.0 asset.
+Detect the host OS and CPU architecture, then choose the matching v0.3.0 asset.
 
 | Platform | Asset |
 | --- | --- |
@@ -68,7 +73,7 @@ Detect the host OS and CPU architecture, then choose the matching v0.2.0 asset.
 Release page:
 
 ```text
-https://github.com/nagorn/echo-mcp/releases/tag/v0.2.0
+https://github.com/nagorn/echo-mcp/releases/tag/v0.3.0
 ```
 
 ### 2. Download And Verify The Release Binary
@@ -84,9 +89,9 @@ Silicon:
 
 ```bash
 curl -L -o /tmp/echo-mcp_darwin_arm64.tar.gz \
-  https://github.com/nagorn/echo-mcp/releases/download/v0.2.0/echo-mcp_darwin_arm64.tar.gz
+  https://github.com/nagorn/echo-mcp/releases/download/v0.3.0/echo-mcp_darwin_arm64.tar.gz
 curl -L -o /tmp/echo-mcp-checksums.txt \
-  https://github.com/nagorn/echo-mcp/releases/download/v0.2.0/checksums.txt
+  https://github.com/nagorn/echo-mcp/releases/download/v0.3.0/checksums.txt
 ```
 
 Verify SHA-256 before extraction:
@@ -127,7 +132,7 @@ shipping dependency -> ECHO_MCP_HTTP_ADDR=127.0.0.1:18082
 ```
 
 Do not configure one Echo MCP process to represent multiple independent
-dependencies. That is future work and would require a future ADR.
+dependencies. That is future work.
 
 ### 4. Register the MCP Server
 
@@ -139,17 +144,27 @@ Codex-compatible shape:
 [mcp_servers.echo_mcp]
 command = "/absolute/path/to/project/.codex/bin/echo-mcp"
 args = []
-env = { ECHO_MCP_HTTP_ADDR = "127.0.0.1:18080" }
+env = { ECHO_MCP_HTTP_ADDR = "127.0.0.1:18080", ECHO_MCP_CONTRACT_ROOT = "/absolute/path/to/project/contracts" }
 ```
 
 Use `echo_mcp` as the recommended MCP server name for Codex. Some clients may
 display tool namespaces using this name.
 
-If contract validation is needed, add:
+If contract validation is needed, prefer runtime loading after startup:
 
 ```text
-ECHO_MCP_OPENAPI_FILE=/absolute/path/to/project/contracts/payment.openapi.json
+load_openapi_contract({ "path": "provider.openapi.json", "validation_mode": "strict" })
+get_contract_status({})
 ```
+
+Startup loading remains available:
+
+```text
+ECHO_MCP_OPENAPI_FILE=provider.openapi.json
+```
+
+Both runtime and startup paths must resolve under `ECHO_MCP_CONTRACT_ROOT`. If
+that variable is unset, Echo MCP uses the process working directory as the root.
 
 If webhook-style event delivery is needed, add:
 
@@ -176,11 +191,11 @@ PAYMENT_API_BASE_URL=http://127.0.0.1:18080
 Do not modify application code to add Echo MCP-specific branches, simulator
 headers, MCP awareness, or observation reads.
 
-### 6. Run the Smoke Test
+### 6. Run the Manual Smoke Test
 
-First verify the MCP Standard guidance surfaces: initialize instructions,
-workflow-aware `tools/list` descriptions, four guidance prompts, and four
-guidance resources. Then ask the MCP host to call `configure_behavior`:
+First verify the MCP guidance surfaces: initialize instructions,
+workflow-aware `tools/list` descriptions, guidance prompts, and guidance
+resources. Then ask the MCP host to call `configure_behavior`:
 
 ```json
 {
@@ -230,17 +245,39 @@ behavior is not provider-contract validated unless OpenAPI-backed validation is
 active. These guidance fields are MCP control-plane output only; they do not
 mutate REST data-plane response bodies.
 
-### 7. Use Echo MCP in an E2E Test
+### 7. Run the Contract-Backed Smoke Test
+
+When an OpenAPI 3.0 JSON contract is available under the contract root:
+
+1. Call `load_openapi_contract`.
+2. Call `get_contract_status`.
+3. Confirm `active` is true.
+4. Inspect `validation_scope`, `validation_capabilities`, and
+   `validation_mode_description`.
+5. Configure one valid strict response with `configure_behavior`.
+6. Configure one intentionally invalid strict response and confirm MCP rejects
+   it.
+7. Configure the same invalid response with `validation.mode = "off"` and a
+   non-empty `reason` when testing fault handling.
+8. Call `reset` and confirm the contract remains active.
+9. Call `unload_openapi_contract` when switching contracts.
+
+Do not claim full OpenAPI validation. Echo MCP performs partial response
+validation for supported OpenAPI 3.0 JSON features only.
+
+### 8. Use Echo MCP in an E2E Test
 
 For a real test:
 
 1. Read the test objective.
 2. Identify the external dependency behavior to simulate.
-3. Configure Echo MCP through `configure_behavior` or `send_webhook_event`.
-4. Run the application E2E test through the application.
-5. Inspect `get_observations`.
-6. Verify application behavior with normal assertions.
-7. Call `reset`.
+3. Load a contract when contract fidelity matters and a local contract is
+   available.
+4. Configure Echo MCP through `configure_behavior` or `send_webhook_event`.
+5. Run the application E2E test through the application.
+6. Inspect `get_observations`.
+7. Verify application behavior with normal assertions.
+8. Call `reset`.
 
 Do not bypass the application by treating Echo MCP's REST data plane as the test
 subject.
@@ -309,6 +346,7 @@ configured.
 - Do not configure webhook endpoints pointing to arbitrary third-party systems.
 - Do not provide raw outbound URLs through MCP.
 - Respect developer-supplied API contracts.
+- Inspect validation capability disclosure before claiming contract coverage.
 - Do not invent unsupported Echo MCP features.
 - Reset Echo MCP between scenarios.
 

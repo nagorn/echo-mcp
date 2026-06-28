@@ -1,0 +1,23 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Unresolved Ref Corpus Fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/widgets/{id}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Widget",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/MissingWidget"}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

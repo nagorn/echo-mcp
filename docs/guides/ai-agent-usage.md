@@ -30,7 +30,7 @@ Recommended discovery order:
 
 If Echo MCP is not configured for the project, do not assume its presence. The
 AI agent should gracefully continue using the project's normal testing workflow.
-Echo MCP v0.2.0 does not introduce or require an `echo-mcp.yaml` project
+Echo MCP v0.3.0 does not introduce or require an `echo-mcp.yaml` project
 manifest.
 
 ## Core Rule
@@ -41,12 +41,15 @@ An AI agent using Echo MCP should:
 
 - configure external dependency behavior through Echo MCP MCP tools
 - treat one Echo MCP process as one simulated external dependency
+- load a contract through `load_openapi_contract` when contract fidelity matters
+  and a local OpenAPI 3.0 JSON contract is available
+- inspect `get_contract_status` before assuming contract-backed validation
 - select configured webhook endpoint names when sending webhook-style events
 - run the application's end-to-end test normally
 - inspect Echo MCP observations through MCP
 - reset Echo MCP between test scenarios
 - keep configured behavior compatible with known API contracts when contract
-  constraints are available
+  constraints are active
 
 The AI agent must not:
 
@@ -59,6 +62,7 @@ The AI agent must not:
 - treat Echo MCP as an AI runtime
 - expect Echo MCP to infer, generate, or expand behavior from test intent
 - invent unsupported Echo MCP capabilities
+- claim strict mode is full OpenAPI validation
 
 Echo MCP is a deterministic execution engine. The AI agent decides the test
 scenario, constructs the concrete simulated behavior, and sends the complete
@@ -75,16 +79,41 @@ to developer-configured application webhook endpoints selected by endpoint name.
 3. Choose `manual_mock`, `hybrid_validation`, or `contract_first` based on the
    project need and available contracts.
 4. Identify which external dependency behavior must be simulated.
-5. Configure Echo MCP via MCP.
-6. Run the application E2E test normally.
-7. Inspect Echo MCP observations.
-8. Verify application behavior.
-9. Reset Echo MCP before the next scenario.
+5. If contract fidelity matters, call `load_openapi_contract` and then
+   `get_contract_status`.
+6. Configure Echo MCP via MCP.
+7. Run the application E2E test normally.
+8. Inspect Echo MCP observations.
+9. Verify application behavior.
+10. Reset Echo MCP before the next scenario.
 
 Use `manual_mock` for quick hand-authored behavior. Manual mock behavior is not
 provider-contract validated unless OpenAPI-backed validation is active. Use
 `hybrid_validation` or `contract_first` when a developer-provided OpenAPI
 contract exists and provider fidelity matters.
+
+## Contract-Backed Workflow
+
+When using a contract-backed workflow:
+
+1. Locate a local OpenAPI 3.0 JSON contract or ask the developer for it.
+2. Confirm the file is under `ECHO_MCP_CONTRACT_ROOT`. If the variable is not
+   set, the process working directory is the contract root.
+3. Call `load_openapi_contract` with a local path.
+4. Call `get_contract_status`.
+5. Inspect `validation_scope`, `validation_capabilities`, and
+   `validation_mode_description`.
+6. Configure behavior using paths, statuses, content types, and response bodies
+   from the contract.
+7. Treat strict validation failures as test setup failures unless the failure is
+   caused by an unsupported schema feature.
+8. For intentional fault tests, use `validation.mode = "off"` with a non-empty
+   `reason`.
+9. Use `reset` between scenarios; reset keeps the active contract loaded.
+10. Use `unload_openapi_contract` only when switching contract contexts.
+
+Strict mode means strict enforcement of supported capabilities only. It is not
+full OpenAPI validation.
 
 ## Step Details
 
@@ -101,8 +130,9 @@ and what response the dependency should return.
 
 If a test involves multiple external dependencies, use one Echo MCP process per
 dependency. Each process should have its own `ECHO_MCP_HTTP_ADDR`, optional
-contract configuration, and MCP server registration. Do not assume one Echo MCP
-process can hold multiple dependency contracts or independent behavior sets.
+contract root, optional contract loading, and MCP server registration. Do not
+assume one Echo MCP process can hold multiple dependency contracts or independent
+behavior sets.
 
 For REST-style request/response tests, configure one active behavior rule:
 
@@ -116,43 +146,30 @@ For REST-style request/response tests, configure one active behavior rule:
 For webhook-style event tests, select a configured application webhook endpoint
 by `endpoint_name` and provide a JSON `request.body`.
 
-Do not add extra simulator behavior unless Echo MCP explicitly supports it.
-
 ### 3. Configure Echo MCP via MCP
 
-Use the MCP control plane to configure behavior. The current MCP
-control-plane tool surface is:
+Use the MCP control plane to configure behavior. The current MCP control-plane
+tool surface is:
 
+- `load_openapi_contract`
+- `get_contract_status`
+- `unload_openapi_contract`
 - `configure_behavior`
 - `reset`
 - `send_webhook_event`
 - `get_observations`
 
-The current guidance prompts are:
-
-- `echo_mcp_getting_started`
-- `echo_mcp_choose_workflow`
-- `echo_mcp_manual_mock_workflow`
-- `echo_mcp_contract_validation_workflow`
-
-The current guidance resources are:
-
-- `echo://guides/getting-started`
-- `echo://guides/workflows`
-- `echo://guides/manual-mock`
-- `echo://guides/contract-validation`
-
 The application must not call these tools. They are for MCP control-plane
 clients only.
 
 If contract constraints are available for the simulated dependency, configure a
-complete concrete behavior that conforms to the contract. When a project has
-enabled contract-constrained simulation, Echo MCP validates behavior against
-available constraints; it does not generate behavior from the contract.
+complete concrete behavior that conforms to the supported contract subset. Echo
+MCP validates behavior against available constraints; it does not generate
+behavior from the contract.
 
-For webhook-style event delivery, use only configured `endpoint_name` values.
-Do not provide raw URLs, hosts, ports, schemes, custom headers, signatures,
-retry settings, or scheduling metadata.
+For webhook-style event delivery, use only configured `endpoint_name` values. Do
+not provide raw URLs, hosts, ports, schemes, custom headers, signatures, retry
+settings, or scheduling metadata.
 
 ### 4. Run the Application E2E Test Normally
 
@@ -192,10 +209,6 @@ Use observations to verify:
 - whether the webhook delivery received an HTTP response or failed before a
   response
 
-Observation information for unmatched REST requests may be improved later. For
-now, use HTTP `501` as the deterministic signal that the requested behavior was
-not configured or did not match.
-
 Observation data is for test verification. It should not become part of
 application behavior.
 
@@ -212,12 +225,18 @@ prove that the application handled the simulated dependency behavior correctly.
 Call `reset` through MCP before starting the next scenario.
 
 Resetting clears the configured behavior and currently available observations so
-the next scenario starts from known empty runtime state.
+the next scenario starts from known empty runtime state. Reset does not unload
+the active OpenAPI contract.
 
 ## Stripe PaymentIntent Example
 
 Scenario: test how an application handles a failed Stripe-like PaymentIntent
 confirmation.
+
+Echo MCP is not a Stripe simulator and does not include Stripe-specific
+validators. Stripe can be used as a real-provider compatibility probe when a
+local Stripe OpenAPI file is loaded, but the configured behavior remains a
+concrete behavior supplied by the MCP client.
 
 The AI agent configures one behavior through `configure_behavior`:
 
@@ -246,21 +265,10 @@ Content-Type: application/x-www-form-urlencoded
 payment_method=pm_card_visa
 ```
 
-Echo MCP returns the configured HTTP `402` JSON response. The AI agent then
-uses the MCP control plane to call `get_observations` and verifies that Echo MCP
-received the expected request, selected
-`stripe-like-paymentintent-card-declined`, matched on method and path, and
-produced the `http_response` outcome with status `402`.
-
-The AI agent then verifies application behavior through the normal application
-test: for example, the checkout remains unpaid, the user sees the expected
-decline state, and no local payment record is marked complete.
-
-This example is manually configured from a public Stripe-like API shape. Echo
-MCP is not a Stripe simulator, does not include built-in Stripe contracts, and
-does not generate Stripe behavior. If a developer-supplied OpenAPI 3.0.x JSON
-contract is configured, Echo MCP can validate the concrete behavior as a
-constraint before accepting it.
+Echo MCP returns the configured HTTP `402` JSON response. The AI agent then uses
+the MCP control plane to call `get_observations` and verifies that Echo MCP
+received the expected request, selected the configured behavior, matched on
+method and path, and produced the `http_response` outcome with status `402`.
 
 ## Webhook Event Example
 
@@ -276,35 +284,17 @@ ECHO_MCP_WEBHOOK_ENDPOINT_ADDRESS=http://127.0.0.1:3000/webhooks/payments \
 ./bin/echo-mcp
 ```
 
-The AI agent calls `send_webhook_event` with the configured endpoint name:
-
-```json
-{
-  "event_id": "evt_payment_failed_001",
-  "endpoint_name": "payment-events",
-  "request": {
-    "body": {
-      "type": "payment.failed",
-      "data": {
-        "object": {
-          "id": "pay_123"
-        }
-      }
-    }
-  }
-}
-```
-
-Echo MCP sends one HTTP `POST` with `Content-Type: application/json` to the
-configured application webhook endpoint. The AI agent then calls
-`get_observations` and verifies the `webhook_deliveries` entry.
+The AI agent calls `send_webhook_event` with the configured endpoint name. Echo
+MCP sends one HTTP `POST` with `Content-Type: application/json` to the configured
+application webhook endpoint. The AI agent then calls `get_observations` and
+verifies the `webhook_deliveries` entry.
 
 ## Agent Guidance Compatibility
 
-The v0.2.0 guidance surfaces are MCP-standard and advisory. Agent behavior may
-vary by MCP client, and some clients may not automatically read prompts or
-resources. Structured guidance fields in tool results are additive; strict MCP
-clients should tolerate additional structured output fields.
+The guidance surfaces are MCP-standard and advisory. Agent behavior may vary by
+MCP client, and some clients may not automatically read prompts or resources.
+Structured guidance fields in tool results are additive; strict MCP clients
+should tolerate additional structured output fields.
 
 Control-plane guidance does not change REST data-plane response bodies.
 
@@ -318,8 +308,10 @@ Current MVP limits include:
 - one simulated external dependency per Echo MCP process
 - configurable REST data-plane listen address with `ECHO_MCP_HTTP_ADDR`
 - unmatched REST data-plane requests return HTTP `501 Not Implemented`
-- optional validation against one developer-provided OpenAPI 3.0.x JSON
+- partial response validation against one developer-provided OpenAPI 3.0 JSON
   contract
+- local internal `$ref` resolution for response schemas
+- contract root boundary via `ECHO_MCP_CONTRACT_ROOT`
 - immediate single-attempt webhook-style event delivery to one configured
   application webhook endpoint
 - no UI
@@ -328,11 +320,17 @@ Current MVP limits include:
 - no authentication or authorization
 - no user management
 - no persistence
-- no OpenAPI import or generation
+- no OpenAPI 3.1
+- no YAML
+- no remote/file refs
+- no `allOf`, `oneOf`, or `anyOf` semantics
+- no request body, query, header, or path parameter validation
+- no OpenAPI import, generation, remote fetching, or automatic scenario
+  generation
 - no full OpenAPI-first runtime
 - no `echo-mcp.yaml` project manifest
-- no OpenAPI 3.1.x, YAML OpenAPI, or external `$ref` support
 - no built-in public API contracts
+- no provider-specific simulators
 - no multi-dependency support inside one Echo MCP process
 - no recording or replay
 - no timeout outcome
@@ -347,8 +345,8 @@ Current MVP limits include:
 - no metrics or audit logs
 - no production deployment architecture
 
-When a scenario needs unsupported behavior, identify the gap instead of
-silently modifying application code or inventing an Echo MCP capability.
+When a scenario needs unsupported behavior, identify the gap instead of silently
+modifying application code or inventing an Echo MCP capability.
 
 ## Design Philosophy
 

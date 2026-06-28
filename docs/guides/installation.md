@@ -14,21 +14,21 @@ Echo MCP is source-available under the Elastic License 2.0. It is not OSI open
 source.
 
 Echo MCP is intended for local development, local AI-assisted testing, and
-controlled CI/test environments. Do not expose the HTTP data plane to untrusted
-networks.
+controlled CI/test environments. Do not expose the HTTP data plane or MCP
+control plane to untrusted networks.
 
 ## Release
 
 Current release:
 
 ```text
-v0.2.0
+v0.3.0
 ```
 
 Release page:
 
 ```text
-https://github.com/nagorn/echo-mcp/releases/tag/v0.2.0
+https://github.com/nagorn/echo-mcp/releases/tag/v0.3.0
 ```
 
 ## Choose The Asset
@@ -54,9 +54,9 @@ for macOS Apple Silicon:
 
 ```bash
 curl -L -o /tmp/echo-mcp_darwin_arm64.tar.gz \
-  https://github.com/nagorn/echo-mcp/releases/download/v0.2.0/echo-mcp_darwin_arm64.tar.gz
+  https://github.com/nagorn/echo-mcp/releases/download/v0.3.0/echo-mcp_darwin_arm64.tar.gz
 curl -L -o /tmp/echo-mcp-checksums.txt \
-  https://github.com/nagorn/echo-mcp/releases/download/v0.2.0/checksums.txt
+  https://github.com/nagorn/echo-mcp/releases/download/v0.3.0/checksums.txt
 ```
 
 Verify the SHA-256 checksum:
@@ -85,7 +85,7 @@ Codex-compatible configuration shape:
 [mcp_servers.echo_mcp]
 command = "/absolute/path/to/project/.codex/bin/echo-mcp"
 args = []
-env = { ECHO_MCP_HTTP_ADDR = "127.0.0.1:18080" }
+env = { ECHO_MCP_HTTP_ADDR = "127.0.0.1:18080", ECHO_MCP_CONTRACT_ROOT = "/absolute/path/to/project/contracts" }
 ```
 
 The recommended MCP server name is `echo_mcp`; some clients may display tool
@@ -95,11 +95,25 @@ stdio and pass environment variables.
 
 ## Optional Runtime Configuration
 
-Use a developer-provided OpenAPI 3.0.x JSON contract as a validation constraint:
+Use `ECHO_MCP_CONTRACT_ROOT` to bound OpenAPI contract loading:
 
 ```text
-ECHO_MCP_OPENAPI_FILE=/absolute/path/to/project/contracts/payment.openapi.json
+ECHO_MCP_CONTRACT_ROOT=/absolute/path/to/project/contracts
 ```
+
+If unset, Echo MCP uses the process working directory as the contract root.
+Runtime `load_openapi_contract` paths and startup `ECHO_MCP_OPENAPI_FILE` paths
+must resolve under this root.
+
+Startup-load one developer-provided OpenAPI 3.0 JSON contract:
+
+```text
+ECHO_MCP_OPENAPI_FILE=provider.openapi.json
+```
+
+Runtime loading through MCP is usually preferable for AI agents and test
+harnesses that start Echo MCP first, then load a contract before configuring
+behavior.
 
 Register one application webhook endpoint:
 
@@ -117,17 +131,19 @@ outbound URLs.
 After MCP registration:
 
 1. Confirm the MCP client can see Echo MCP initialize instructions.
-2. Confirm `tools/list` includes workflow-aware descriptions.
-3. Confirm `prompts/list` includes four guidance prompts.
-4. Confirm `resources/list` includes four guidance resources.
-5. Ask the MCP client to call `configure_behavior` for `GET /hello`.
-6. Confirm the MCP result includes `configured`, `behavior_id`, and additive
+2. Confirm `tools/list` includes `load_openapi_contract`,
+   `get_contract_status`, `unload_openapi_contract`, `configure_behavior`,
+   `get_observations`, `reset`, and `send_webhook_event`.
+3. Confirm guidance surfaces describe partial validation, not full OpenAPI
+   validation.
+4. Ask the MCP client to call `configure_behavior` for `GET /hello`.
+5. Confirm the MCP result includes `configured`, `behavior_id`, and additive
    guidance fields such as `warnings`, `guidance`, or `suggested_next_actions`.
-7. Send a REST request to `http://127.0.0.1:18080/hello`.
-8. Ask the MCP client to call `get_observations`.
-9. Confirm the observation includes the received request, matched behavior, and
+6. Send a REST request to `http://127.0.0.1:18080/hello`.
+7. Ask the MCP client to call `get_observations`.
+8. Confirm the observation includes the received request, matched behavior, and
    HTTP outcome.
-10. Call `reset`.
+9. Call `reset`.
 
 Example behavior:
 
@@ -156,8 +172,26 @@ curl -i http://127.0.0.1:18080/hello
 In real end-to-end tests, the Application Under Test should make the request
 through its normal external dependency configuration.
 
-Agent guidance is returned only through MCP control-plane surfaces. It does not
-change REST data-plane response bodies.
+Agent guidance and validation warnings are returned only through MCP
+control-plane surfaces. They do not change REST data-plane response bodies.
+
+## Contract-Backed Smoke Verification
+
+For contract-backed behavior:
+
+1. Put a local OpenAPI 3.0 JSON contract under `ECHO_MCP_CONTRACT_ROOT`.
+2. Start Echo MCP.
+3. Call `load_openapi_contract`.
+4. Call `get_contract_status` and inspect `validation_scope`,
+   `validation_capabilities`, and `validation_mode_description`.
+5. Call `configure_behavior` with a contract-valid response.
+6. Confirm invalid strict responses are rejected through MCP.
+7. Use `validation.mode = "off"` with a reason for intentional fault tests.
+8. Call `reset` and confirm the contract remains active.
+9. Call `unload_openapi_contract` when switching contract contexts.
+
+Validation is partial response validation for supported OpenAPI 3.0 JSON
+features. Strict means strict for supported capabilities only.
 
 ## Source Build Fallback
 

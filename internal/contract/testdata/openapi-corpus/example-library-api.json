@@ -1,0 +1,87 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Example Library API",
+    "version": "1.0.0",
+    "description": "Provider-neutral compatibility fixture for common REST response schemas."
+  },
+  "paths": {
+    "/books/{id}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Book",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Book"}
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ErrorResponse"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/books": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Books",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/BookList"}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Author": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string"}
+        }
+      },
+      "Book": {
+        "type": "object",
+        "required": ["id", "title", "status", "author"],
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "status": {"type": "string", "enum": ["available", "checked_out"]},
+          "author": {"$ref": "#/components/schemas/Author"},
+          "subtitle": {"type": "string", "nullable": true}
+        },
+        "additionalProperties": false
+      },
+      "BookList": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/Book"}
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {"type": "string"}
+        }
+      }
+    }
+  }
+}

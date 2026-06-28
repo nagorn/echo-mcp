@@ -29,23 +29,27 @@ Use `hybrid_validation` when:
 
 - a contract exists
 - manual scenarios are still useful
-- validation or reporting is available or planned
+- partial response validation is enough for the current risk
 - migration from manual mocks is desired
 
-Hybrid workflows let teams keep practical scenario coverage while moving toward
-contract-backed checks where the current Echo MCP setup supports them.
+Hybrid workflows let teams keep practical scenario coverage while using
+contract-backed checks where Echo MCP supports them.
 
 ### `contract_first`
 
 Use `contract_first` when:
 
 - external provider fidelity matters
-- CI should catch schema drift
-- an official or internal OpenAPI contract is available
+- CI should catch response schema drift for supported OpenAPI features
+- an official or internal OpenAPI 3.0 JSON contract is available
 
-The OpenAPI contract should be the source of truth for paths, request schemas,
-response schemas, and enums. Do not ask the agent to handwrite provider
-request/response schemas when the contract is available.
+The OpenAPI contract should be the source of truth for paths, response statuses,
+content types, and response schemas. Do not ask the agent to handwrite provider
+response schemas when the contract is available.
+
+In v0.3.0, contract-first means partial response validation for supported
+OpenAPI 3.0 JSON features. It does not mean full OpenAPI validation, request
+validation, automatic scenario generation, or a provider-specific simulator.
 
 ## Prompt Warning
 
@@ -83,12 +87,13 @@ Constraints:
 Use Echo MCP in hybrid_validation mode for this integration test.
 
 Before configuring behavior:
-- Look for an official or internal OpenAPI contract in the project.
-- Use Echo MCP validation or reporting where the current setup supports it.
+- Look for an official or internal OpenAPI 3.0 JSON contract in the project.
+- Start Echo MCP and call load_openapi_contract when a local contract is available.
+- Call get_contract_status and inspect validation_scope and validation_capabilities.
 - Manual scenarios are allowed, but document which parts are manual and which
   parts are contract-backed.
 
-If validation is unavailable:
+If validation is unavailable or unsupported for this scenario:
 - Document the downgrade to manual behavior.
 - Keep the scenario narrow and do not duplicate large provider schemas unless
   necessary for the test.
@@ -103,23 +108,27 @@ Use Echo MCP in contract_first mode for this external API integration.
 Provider contract fidelity matters for this task.
 
 Before writing provider request or response schemas:
-- Locate the official or internal OpenAPI contract, or ask me for it if it is
-  not present.
-- Do not handwrite provider request/response schemas when the contract is
-  available.
-- Treat the OpenAPI contract as the source of truth for paths, request schemas,
-  response schemas, and enums.
+- Locate the official or internal OpenAPI 3.0 JSON contract, or ask me for it if
+  it is not present.
+- Start Echo MCP with ECHO_MCP_CONTRACT_ROOT set to the contract directory when possible.
+- Call load_openapi_contract.
+- Call get_contract_status and inspect validation_scope, validation_capabilities,
+  and validation_mode_description.
+- Do not handwrite provider response schemas when the contract can validate the
+  configured response.
+- Treat strict mode as strict for Echo MCP's supported validation capabilities,
+  not as full OpenAPI validation.
 
 Echo MCP setup:
-- Wire Echo MCP validation if the current project and Echo MCP configuration
-  support it.
-- If validation is unavailable, document the downgrade to hybrid_validation or
-  manual_mock behavior.
+- Configure behavior through MCP tools.
+- If validation rejects because a feature is unsupported, report the unsupported
+  feature instead of claiming the response body is invalid.
+- If intentionally testing malformed provider behavior, use validation.mode=off
+  with a non-empty reason.
 - Ask me before silently downgrading contract fidelity.
 
 Test behavior:
 - Keep application code production-like.
-- Configure Echo MCP through MCP tools.
 - Run the application test normally.
 - Inspect Echo MCP observations and reset between scenarios.
 ```
@@ -128,7 +137,13 @@ Test behavior:
 
 - Echo MCP does not automatically fetch or import provider contracts.
 - Echo MCP does not make manual mocks provider-contract validated.
-- Echo MCP does not require `echo-mcp.yaml`.
-- Echo MCP is not an OpenAPI-first runtime.
+- Echo MCP does not require or read `echo-mcp.yaml`.
+- Echo MCP is not a full OpenAPI-first runtime.
+- Validation is partial response validation for supported OpenAPI 3.0 JSON
+  features.
+- Request body, query, header, and path parameter validation are not
+  implemented.
+- OpenAPI 3.1, YAML, remote/file refs, `allOf`, `oneOf`, and `anyOf` are not
+  implemented.
 - Manual mocks remain useful when speed, exploration, or failure simulation is
   the priority.

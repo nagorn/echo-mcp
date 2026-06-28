@@ -1,0 +1,43 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Nested Local Ref Corpus Fixture",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/widgets/{id}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Widget",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Widget"}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Owner": {
+        "type": "object",
+        "required": ["id", "email"],
+        "properties": {
+          "id": {"type": "string"},
+          "email": {"type": "string"}
+        }
+      },
+      "Widget": {
+        "type": "object",
+        "required": ["id", "owner"],
+        "properties": {
+          "id": {"type": "string"},
+          "owner": {"$ref": "#/components/schemas/Owner"}
+        }
+      }
+    }
+  }
+}
